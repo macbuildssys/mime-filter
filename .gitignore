@@ -1,0 +1,15 @@
+# Build output
+web-ext-artifacts/
+
+# Stray directory from bad mkdir
+{popup,icons,_locales/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
