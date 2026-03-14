@@ -1,5 +1,11 @@
 # MIME Filter Browser Extension
 
+<p align="center">
+  <img src="ascii-art-text.png" alt="MIME Filter" width="600" />
+</p>
+<p align="center" style="margin-top:-90px"><em>Block what doesn't belong. Allow what does.</em></p>
+
+
 A cross-browser extension for **Chrome**, **Firefox**, and **LibreWolf** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
 
 ## Installation
@@ -184,4 +190,4 @@ no match=block  no match=allow
 
 ## License
 
-Distributed under the MIT License. See LICENSE.
+Distributed under the MIT License. See [LICENSE](LICENSE).
