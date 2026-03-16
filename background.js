@@ -795,12 +795,14 @@ function buildLogEntry(downloadItem, status, reason) {
 //  Notifications 
 
 function notify(title, message) {
-  chrome.notifications.create({
-    type:    'basic',
-    iconUrl: '../icons/icon48.png',
-    title,
-    message,
-    priority: 1,
+  chrome.notifications.clear('mime-filter-blocked', () => {
+    chrome.notifications.create('mime-filter-blocked', {
+      type:    'basic',
+      iconUrl: '../icons/icon48.png',
+      title,
+      message,
+      priority: 1,
+    });
   });
 }
 
@@ -863,11 +865,22 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 
 //  Storage initialisation 
 
+function clearAllNotifications() {
+  chrome.notifications.getAll(all => {
+    Object.keys(all).forEach(id => chrome.notifications.clear(id, () => {}));
+  });
+}
+
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  clearAllNotifications();
   if (reason === 'install') {
     await chrome.storage.local.set(DEFAULT_STATE);
     console.info('[MIME Filter] Installed with default settings.');
   }
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  clearAllNotifications();
 });
 
 //  Message bridge (popup ↔ background) 

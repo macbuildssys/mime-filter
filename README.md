@@ -29,12 +29,16 @@ A cross-browser extension for **Chrome**, **Firefox**, and **LibreWolf** that in
 
 3. The extension is active until Firefox restarts.
 
-### Firefox / LibreWolf (signed .xpi — permanent install)
+### Firefox/LibreWolf (signed .xpi — permanent install)
 
 1. Download the latest `.xpi` file from the [Releases](https://github.com/macbuildssys/mime-filter/releases) page.
+
 2. Open Firefox and go to `about:addons`.
+
 3. Click the gear icon ⚙️ → **Install Add-on From File…**
+
 4. Select the downloaded `.xpi` file.
+
 5. Click **Add** when prompted.
 
 The extension will persist across Firefox restarts and update when you install a newer `.xpi`.
@@ -44,7 +48,7 @@ For LibreWolf, the steps are identical — the signed `.xpi` works without any c
 
 ## Usage
 
-### Enable / Disable
+### Enable/Disable
 
 The **ON/OFF** toggle in the header enables or disables all download filtering. Settings and logs are preserved while disabled.
 
