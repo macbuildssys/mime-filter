@@ -1,12 +1,11 @@
 /**
- * MIME Filter - Background Service Worker
- *
+ * MIME Filter: Background Service Worker
  * Intercepts browser downloads via chrome.downloads.onCreated,
  * checks the MIME type against the user's configured rules,
  * and cancels + logs blocked downloads.
  */
 
-//  Constants 
+//  Constants
 
 const STORAGE_KEYS = {
   ENABLED:         'enabled',
@@ -15,6 +14,8 @@ const STORAGE_KEYS = {
   DENYLIST_RULES:  'denylistRules',
   LOG:             'downloadLog',
   MAX_LOG:         'maxLogSize',
+  UNKNOWN_BLOCK:   'unknownBlock',
+  NOTIFY_ON:       'notifyOn',
 };
 
 const DEFAULT_STATE = {
@@ -700,11 +701,13 @@ const DEFAULT_STATE = {
     'x-conference/x-cooltalk',
   ],
   [STORAGE_KEYS.DENYLIST_RULES]: [],
-  [STORAGE_KEYS.LOG]:      [],
-  [STORAGE_KEYS.MAX_LOG]:  500,
+  [STORAGE_KEYS.LOG]:            [],
+  [STORAGE_KEYS.MAX_LOG]:        500,
+  [STORAGE_KEYS.UNKNOWN_BLOCK]:  true,
+  [STORAGE_KEYS.NOTIFY_ON]:      true,
 };
 
-//  Storage helpers 
+//  Storage helpers
 
 async function getState() {
   const result = await chrome.storage.local.get(null);
@@ -722,15 +725,16 @@ async function getSettings() {
     mode,
     mimeRules: rules,
     maxLog:    state[STORAGE_KEYS.MAX_LOG],
+    unknownBlock: state[STORAGE_KEYS.UNKNOWN_BLOCK] ?? true,
+    notifyOn:     state[STORAGE_KEYS.NOTIFY_ON]     ?? true,
   };
 }
 
-//  MIME type matching 
+//  MIME type matching
 
 /**
  * Checks if a MIME type matches any rule in the list.
  * Rules may be prefix-based (e.g. "image/" matches "image/png").
- *
  * Mirrors the strncasecmp prefix logic in SAutotransferMime::checkSingleFile.
  */
 function matchesMimeRule(mimeType, rules) {
@@ -744,19 +748,19 @@ function matchesMimeRule(mimeType, rules) {
 
 /**
  * Returns true if the download should be allowed through.
+ * Only called when mimeType is non-empty; the empty-MIME case is
+ * handled separately in the listener using the unknownBlock setting.
  */
 function isAllowed(mimeType, mode, rules) {
   const matches = matchesMimeRule(mimeType, rules);
   if (mode === 'allowlist') {
-    // Allow only if MIME type is in the allowlist
     return matches;
   } else {
-    // Denylist mode: block if MIME type is in the denylist
     return !matches;
   }
 }
 
-//  Logging 
+//  Logging
 
 /**
  * @typedef {Object} LogEntry
@@ -769,15 +773,20 @@ function isAllowed(mimeType, mode, rules) {
  * @property {string} timestamp   - ISO 8601
  */
 
-async function appendLog(entry) {
-  const state = await getState();
-  const log    = state[STORAGE_KEYS.LOG];
-  const maxLog = state[STORAGE_KEYS.MAX_LOG];
+// Serialise all appendLog calls so that concurrent downloads cannot race on the read-modify-write of the log array
 
-  log.unshift(entry); // newest first
-  if (log.length > maxLog) log.length = maxLog;
+let _logQueue = Promise.resolve();
 
-  await chrome.storage.local.set({ [STORAGE_KEYS.LOG]: log });
+function appendLog(entry) {
+  _logQueue = _logQueue.then(async () => {
+    const data   = await chrome.storage.local.get([STORAGE_KEYS.LOG, STORAGE_KEYS.MAX_LOG]);
+    const log    = data[STORAGE_KEYS.LOG]     || [];
+    const maxLog = data[STORAGE_KEYS.MAX_LOG] || 500;
+    log.unshift(entry); // newest first
+    if (log.length > maxLog) log.length = maxLog;
+    await chrome.storage.local.set({ [STORAGE_KEYS.LOG]: log });
+  });
+  return _logQueue;
 }
 
 function buildLogEntry(downloadItem, status, reason) {
@@ -792,35 +801,75 @@ function buildLogEntry(downloadItem, status, reason) {
   };
 }
 
-//  Notifications 
+//  Notifications
 
 function notify(title, message) {
-  chrome.notifications.create({
-    type:    'basic',
-    iconUrl: '../icons/icon48.png',
-    title,
-    message,
-    priority: 1,
+  chrome.notifications.clear('mime-filter-blocked', () => {
+    chrome.notifications.create('mime-filter-blocked', {
+      type:    'basic',
+      iconUrl: '../icons/icon48.png',
+      title,
+      message,
+      priority: 1,
+    });
   });
 }
 
-//  Download interception 
+//  Shared URL helper
+
+function buildShortUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname + (u.pathname.length > 30 ? u.pathname.slice(0, 30) + '…' : u.pathname);
+  } catch {
+    return url?.slice(0, 60) || 'unknown';
+  }
+}
+
+//  Download interception
 
 chrome.downloads.onCreated.addListener(async (downloadItem) => {
   try {
-    const { enabled, mode, mimeRules } = await getSettings();
+    // Destructure unknownBlock and notifyOn which are now returned
+    const { enabled, mode, mimeRules, unknownBlock, notifyOn } = await getSettings();
 
     if (!enabled) return;
 
     const mimeType = downloadItem.mime || '';
-    const allowed  = isAllowed(mimeType, mode, mimeRules);
+
+    if (!mimeType) {
+      if (unknownBlock) {
+        await chrome.downloads.cancel(downloadItem.id);
+        setTimeout(() => {
+          chrome.downloads.erase({ id: downloadItem.id }).catch(() => {});
+        }, 500);
+
+        const reason = 'No MIME type reported by browser (unknown-block is ON)';
+        await appendLog(buildLogEntry(downloadItem, 'blocked', reason));
+
+        // Gate on notifyOn
+        if (notifyOn) {
+          notify('🚫 Download Blocked by MIME Filter',
+            `unknown/unknown\n${buildShortUrl(downloadItem.url)}`);
+        }
+
+        console.info(`[MIME Filter] BLOCKED (no MIME): ${downloadItem.url}`);
+      } else {
+        if (mimeRules.length > 0) {
+          const reason = 'No MIME type reported by browser (unknown-block is OFF)';
+          await appendLog(buildLogEntry(downloadItem, 'allowed', reason));
+        }
+        console.info(`[MIME Filter] ALLOWED (no MIME, pass-through): ${downloadItem.url}`);
+      }
+      return;
+    }
+
+    const allowed = isAllowed(mimeType, mode, mimeRules);
 
     if (!allowed) {
-      // Cancel immediately
       await chrome.downloads.cancel(downloadItem.id);
 
-      // Erase from download history after a short delay
-      // (must be cancelled before we can erase)
+      // Erase from download history after a short delay (must be cancelled before we can erase)
       setTimeout(() => {
         chrome.downloads.erase({ id: downloadItem.id }).catch(() => {});
       }, 500);
@@ -831,23 +880,15 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 
       await appendLog(buildLogEntry(downloadItem, 'blocked', reason));
 
-      const shortUrl = (() => {
-        try {
-          const u = new URL(downloadItem.url);
-          return u.hostname + (u.pathname.length > 30 ? u.pathname.slice(0, 30) + '…' : u.pathname);
-        } catch {
-          return downloadItem.url?.slice(0, 60) || 'unknown';
-        }
-      })();
-
-      notify(
-        '🚫 Download Blocked by MIME Filter',
-        `${mimeType || 'unknown/unknown'}\n${shortUrl}`
-      );
+      // Notify() was called unconditionally; gate it on notifyOn
+      if (notifyOn) {
+        notify('🚫 Download Blocked by MIME Filter',
+          `${mimeType}\n${buildShortUrl(downloadItem.url)}`);
+      }
 
       console.info(`[MIME Filter] BLOCKED: ${mimeType} — ${downloadItem.url}`);
     } else {
-      // Allowed — log only if there are rules configured (to avoid noise when list is empty)
+      // Allowed. Log only if there are rules configured (to avoid noise when list is empty)
       if (mimeRules.length > 0) {
         const reason = mode === 'allowlist'
           ? `MIME type "${mimeType}" matched allowlist rule`
@@ -861,16 +902,27 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   }
 });
 
-//  Storage initialisation 
+//  Storage initialisation
+
+function clearAllNotifications() {
+  chrome.notifications.getAll(all => {
+    Object.keys(all).forEach(id => chrome.notifications.clear(id, () => {}));
+  });
+}
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  clearAllNotifications();
   if (reason === 'install') {
     await chrome.storage.local.set(DEFAULT_STATE);
     console.info('[MIME Filter] Installed with default settings.');
   }
 });
 
-//  Message bridge (popup ↔ background) 
+chrome.runtime.onStartup.addListener(() => {
+  clearAllNotifications();
+});
+
+//  Message bridge (popup ↔ background)
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'CLEAR_LOG') {
