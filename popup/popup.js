@@ -1,6 +1,5 @@
 /**
- * MIME Filter. Popup UI
- *
+ * MIME Filter: Popup UI
  * Lightweight reactive UI. State is centralised and render functions re-run on every change.
  */
 
@@ -737,7 +736,8 @@ async function persist(partial) {
   };
   const payload = {};
   for (const [k, v] of Object.entries(partial)) {
-    if (MAP[k]) payload[MAP[k]] = v;
+    // Use membership test instead of truthy check so that keys mapping to falsy values (e.g. '' or 0) are not silently skipped
+    if (k in MAP) payload[MAP[k]] = v;
   }
   return new Promise(resolve => chrome.storage.local.set(payload, resolve));
 }
@@ -781,8 +781,8 @@ function highlightMime(mime) {
 function renderToggle() {
   const checkbox = el('toggle-enabled');
   const label    = el('toggle-label');
-  checkbox.checked    = state.enabled;
-  label.textContent   = state.enabled ? 'ON' : 'OFF';
+  checkbox.checked  = state.enabled;
+  label.textContent = state.enabled ? 'ON' : 'OFF';
 }
 
 function renderModeSelector() {
@@ -833,8 +833,8 @@ function renderLog() {
 }
 
 function renderSettings() {
-  el('max-log-input').value     = state.maxLog;
-  el('notify-toggle').checked   = state.notifyOn;
+  el('max-log-input').value   = state.maxLog;
+  el('notify-toggle').checked = state.notifyOn;
   document.querySelectorAll('#unknown-mime-selector .seg').forEach(btn => {
     btn.classList.toggle('active', (btn.dataset.unknown === 'block') === state.unknownBlock);
   });
@@ -859,7 +859,9 @@ function switchTab(tabId) {
   if (tabId === 'log') refreshLog();
 }
 
-async function refreshLog() {
+// Removed spurious `async` — the body uses a callback, not await, so the keyword was misleading and the returned promise resolved immediately
+
+function refreshLog() {
   chrome.storage.local.get('downloadLog', data => {
     state.log = data.downloadLog || [];
     renderLog();
@@ -919,22 +921,30 @@ function wireSearch() {
   }
 
   async function addMime(mime) {
-    const activeKey  = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
-    const oppositeKey = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
+    const activeKey    = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+    const oppositeKey  = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
     const oppositeList = state.mode === 'allowlist' ? state.denylistRules : state.allowlistRules;
-    if (activeRules().includes(mime)) return;
-    // Remove from the opposite list if present
-    const oppIdx = oppositeList.indexOf(mime);
+
+    // Normalise to lowercase before deduplication so that e.g. "Image/PNG" is not treated as distinct from an existing "image/png" rule
+
+    const normalised = mime.toLowerCase();
+    if (activeRules().some(r => r.toLowerCase() === normalised)) return;
+
+    // Also use case-insensitive search when removing from opposite list
+    const oppIdx = oppositeList.findIndex(r => r.toLowerCase() === normalised);
     if (oppIdx !== -1) oppositeList.splice(oppIdx, 1);
-    activeRules().push(mime);
+
+    activeRules().push(normalised);
     await persist({ [activeKey]: activeRules(), [oppositeKey]: oppositeList });
     renderRuleList();
     renderDropdown(lastQuery);
   }
 
   async function removeMime(mime) {
-    const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
-    const idx = activeRules().indexOf(mime);
+    const key        = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+    const normalised = mime.toLowerCase();
+    // Case-insensitive removal
+    const idx = activeRules().findIndex(r => r.toLowerCase() === normalised);
     if (idx === -1) return;
     activeRules().splice(idx, 1);
     await persist({ [key]: activeRules() });
@@ -957,9 +967,14 @@ function wireSearch() {
       if (items[highlighted]) input.value = items[highlighted].dataset.mime;
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      highlighted = Math.max(highlighted - 1, 0);
+      // Floor was 0, trapping the cursor on the first item forever. Allow decrement to -1 which means "no item selected, restore free text"
+
+      highlighted = Math.max(highlighted - 1, -1);
       items.forEach((el, i) => el.classList.toggle('highlighted', i === highlighted));
-      if (items[highlighted]) input.value = items[highlighted].dataset.mime;
+      if (highlighted >= 0) {
+        input.value = items[highlighted].dataset.mime;
+      }
+      // highlighted === -1: leave input.value as the user's own typed query
     } else if (e.key === 'Escape') {
       closeDropdown();
     } else if (e.key === 'Enter') {
@@ -1012,8 +1027,8 @@ function wireEvents() {
   el('rule-list').addEventListener('click', async e => {
     const btn = e.target.closest('.rule-delete');
     if (!btn) return;
-    const idx  = parseInt(btn.dataset.idx, 10);
-    const key  = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+    const idx = parseInt(btn.dataset.idx, 10);
+    const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
     activeRules().splice(idx, 1);
     await persist({ [key]: activeRules() });
     renderRuleList();
@@ -1035,7 +1050,7 @@ function wireEvents() {
     if (!isNaN(maxVal) && maxVal >= 10) state.maxLog = maxVal;
     await persist({ maxLog: state.maxLog, unknownBlock: state.unknownBlock, notifyOn: state.notifyOn });
     const status = el('save-status');
-    status.textContent  = '✓ Saved';
+    status.textContent   = '✓ Saved';
     status.style.opacity = '1';
     setTimeout(() => { status.style.opacity = '0'; }, 1800);
   });
@@ -1049,7 +1064,9 @@ function wireEvents() {
       a.href     = url;
       a.download = `mime-filter-log-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
-      URL.revokeObjectURL(url);
+      // Revoking immediately after click() races with the browser's async blob read and can produce an empty download, especially in Firefox
+
+      setTimeout(() => URL.revokeObjectURL(url), 100);
     });
   });
 
@@ -1095,24 +1112,31 @@ function wireEvents() {
 
 async function addRuleFromInput() {
   const input = el('rule-input');
-  const value = input.value.trim();
-  if (!value) return;
-  if (!/[a-zA-Z]/.test(value)) {
+  const raw   = input.value.trim();
+  if (!raw) return;
+  if (!/[a-zA-Z]/.test(raw)) {
     input.style.borderColor = 'var(--red)';
     setTimeout(() => { input.style.borderColor = ''; }, 800);
     return;
   }
-  const activeKey   = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+
+  // Normalise to lowercase so the rule list stays consistent with what the background's matchesMimeRule sees after its own toLowerCase()
+  const value = raw.toLowerCase();
+
+  const activeKey    = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
   const oppositeKey  = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
   const oppositeList = state.mode === 'allowlist' ? state.denylistRules : state.allowlistRules;
-  if (!activeRules().includes(value)) {
-    // Remove from the opposite list if present
-    const oppIdx = oppositeList.indexOf(value);
+
+  // FIX 4: case-insensitive duplicate guard
+  if (!activeRules().some(r => r.toLowerCase() === value)) {
+    // FIX 4: case-insensitive opposite-list removal
+    const oppIdx = oppositeList.findIndex(r => r.toLowerCase() === value);
     if (oppIdx !== -1) oppositeList.splice(oppIdx, 1);
     activeRules().push(value);
     await persist({ [activeKey]: activeRules(), [oppositeKey]: oppositeList });
     renderRuleList();
   }
+
   input.value = '';
   input.focus();
 }
