@@ -902,6 +902,111 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   }
 });
 
+// Magic byte signatures
+// Each entry: { bytes: expected hex prefix, mime: what it actually is, label: human name }
+const MAGIC_SIGNATURES = [
+  { bytes: '4d5a',                 mime: 'application/x-msdownload', label: 'Windows Executable (MZ)' },
+  { bytes: '7f454c46',             mime: 'application/x-executable',  label: 'ELF Executable'          },
+  { bytes: '504b0304',             mime: 'application/zip',            label: 'ZIP Archive'             },
+  { bytes: '52617221',             mime: 'application/x-rar-compressed', label: 'RAR Archive'          },
+  { bytes: '255044462d',           mime: 'application/pdf',            label: 'PDF Document'            },
+  { bytes: 'ffd8ff',               mime: 'image/jpeg',                 label: 'JPEG Image'              },
+  { bytes: '89504e47',             mime: 'image/png',                  label: 'PNG Image'               },
+  { bytes: '47494638',             mime: 'image/gif',                  label: 'GIF Image'               },
+  { bytes: '25215053',             mime: 'application/postscript',     label: 'PostScript'              },
+  { bytes: '1f8b',                 mime: 'application/gzip',           label: 'GZIP Archive'            },
+  { bytes: '377abcaf271c',         mime: 'application/x-7z-compressed', label: '7-Zip Archive'         },
+  { bytes: 'd0cf11e0a1b11ae1',     mime: 'application/msword',         label: 'Legacy Office Document'  },
+  { bytes: 'cafebabe',             mime: 'application/java-vm',        label: 'Java Class File'         },
+  { bytes: '213c617263683e',       mime: 'application/x-debian-package', label: 'Debian Package'       },
+  { bytes: 'edabeedb',             mime: 'application/x-rpm',          label: 'RPM Package'             },
+  { bytes: '53514c69746520666f726d617420330', mime: 'application/vnd.sqlite3', label: 'SQLite Database' },
+  { bytes: '000001ba',  mime: 'video/mpeg',   label: 'MPEG Video'    },
+  { bytes: '000001b3',  mime: 'video/mpeg',   label: 'MPEG Video'    },
+  { bytes: '664c6143',  mime: 'audio/flac',   label: 'FLAC Audio'    },
+  { bytes: '4f676753',  mime: 'audio/ogg',    label: 'OGG Container' },
+  { bytes: '52494646',  mime: 'audio/wav',    label: 'WAV Audio'     },
+  { bytes: '00000020667479706d703432', mime: 'video/mp4', label: 'MP4 Video' },
+];
+
+// Convert hex string to byte array for comparison
+function hexToBytes(hex) {
+  const result = [];
+  for (let i = 0; i < hex.length; i += 2) {
+    result.push(parseInt(hex.slice(i, i + 2), 16));
+  }
+  return result;
+}
+
+// Returns the detected real MIME type from magic bytes, or null if unrecognised
+function detectMagicMime(bytes) {
+  const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  for (const sig of MAGIC_SIGNATURES) {
+    if (hex.startsWith(sig.bytes)) return sig;
+  }
+  return null;
+}
+
+// Magic byte inspection on completed downloads
+chrome.downloads.onChanged.addListener(async delta => {
+  if (delta.state?.current !== 'complete') return;
+
+  try {
+    const [item] = await chrome.downloads.search({ id: delta.id });
+    if (!item || !item.url) return;
+
+    // Skip blob and data URLs — cannot be re-fetched
+    if (item.url.startsWith('blob:') || item.url.startsWith('data:')) return;
+
+    // Fetch only the first 16 bytes using a Range request
+    const response = await fetch(item.url, {
+      headers: { Range: 'bytes=0-31' },
+    });
+
+    if (!response.ok) return;
+
+    const buffer  = await response.arrayBuffer();
+    const bytes   = new Uint8Array(buffer).slice(0, 32);
+    const matched = detectMagicMime(bytes);
+
+    if (!matched) return; // Unrecognised — leave it alone
+
+    const declaredMime = (item.mime || '').split(';')[0].trim().toLowerCase();
+    const detectedMime = matched.mime.toLowerCase();
+
+    // Only flag if the detected type genuinely contradicts the declared one
+    if (declaredMime === detectedMime || declaredMime === '') return;
+    // Allow if both are the same top-level type (e.g. both image/)
+    if (declaredMime.split('/')[0] === detectedMime.split('/')[0]) return;
+
+    // Real type contradicts declared — delete the file and log it
+    await chrome.downloads.removeFile(delta.id).catch(() => {});
+    await chrome.downloads.erase({ id: delta.id }).catch(() => {});
+
+    const reason = `Magic bytes indicate "${matched.label}" (${matched.mime}) but server declared "${declaredMime}" — possible MIME spoofing`;
+
+    await appendLog({
+      id:        String(delta.id),
+      url:       item.url,
+      filename:  item.filename || '',
+      mimeType:  declaredMime,
+      status:    'blocked',
+      reason,
+      timestamp: new Date().toISOString(),
+    });
+
+    const { notifyOn } = await getSettings();
+    if (notifyOn) {
+    notify('🚫 Spoofed MIME Blocked', `${matched.label}\nDeclared as: ${declaredMime}`);
+    }
+
+    console.warn(`[MIME Filter] SPOOFED MIME: declared=${declaredMime} actual=${matched.mime} url=${item.url}`);
+
+  } catch (err) {
+    console.error('[MIME Filter] Magic byte inspection error:', err);
+  }
+});
+
 //  Storage initialisation
 
 function clearAllNotifications() {
