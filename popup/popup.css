@@ -25,7 +25,7 @@
   --popup-w:    380px;
 }
 
-html, body { width: var(--popup-w); background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; }
+html, body { width: var(--popup-w); height: 560px; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-sans); font-size: 13px; }
 
 /*  HEADER  */
 
@@ -133,7 +133,7 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
 
 /*  TAB PANELS  */
 
-.tab-panel { display: none; padding: 14px; }
+.tab-panel { display: none; padding: 14px; height: calc(560px - 88px); overflow-y: auto; }
 .tab-panel.active { display: block; }
 
 /*  RULES TAB  */
@@ -220,7 +220,7 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 180px;
+  max-height: 140px;
   overflow-y: auto;
   padding-right: 2px;
   margin-bottom: 12px;
@@ -245,6 +245,10 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
 }
 .rule-item-mime .mime-prefix { color: var(--amber); }
 
@@ -288,7 +292,7 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
 }
 .quick-tag:hover { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
 
-/*  LOG TAB                  */
+/*  LOG TAB  */
 
 .log-toolbar {
   display: flex;
@@ -412,7 +416,6 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
   transition: border-color .15s;
 }
 .setting-input:focus { border-color: var(--amber); }
-/* hide number spinners */
 .setting-input::-webkit-inner-spin-button,
 .setting-input::-webkit-outer-spin-button { -webkit-appearance: none; }
 
@@ -557,37 +560,6 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
 .search-result.is-added .sr-label { color: var(--text); }
 .search-result.is-missing .sr-label { color: var(--text-dim); }
 
-/* Rules panel height constraint */
+/*  Rules panel  */
 
-#panel-rules {
-  max-height: 520px;
-  overflow-y: auto;
-}
-
-.rule-list {
-  max-height: 140px;
-}
-
-.rule-item-mime {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 280px;
-}
-
-html, body {
-  width: var(--popup-w);
-  height: 560px;
-  overflow: hidden;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-sans);
-  font-size: 13px;
-}
-
-.tab-panel {
-  display: none;
-  padding: 14px;
-  height: calc(560px - 88px);
-  overflow-y: auto;
-}
+#panel-rules { max-height: 520px; overflow-y: auto; }
