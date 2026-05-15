@@ -746,14 +746,6 @@ async function persist(partial) {
 
 function el(id) { return document.getElementById(id); }
 
-function escHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 function formatTs(iso) {
   try {
     const d = new Date(iso);
@@ -770,10 +762,40 @@ function shortUrl(url) {
   } catch { return (url || '').slice(0, 50); }
 }
 
-function highlightMime(mime) {
-  const slash = mime.indexOf('/');
-  if (slash === -1) return `<span>${escHtml(mime)}</span>`;
-  return `<span class="mime-prefix">${escHtml(mime.slice(0, slash + 1))}</span>${escHtml(mime.slice(slash + 1))}`;
+// Builds a MIME span with the prefix highlighted in amber, using DOM methods.
+// Returns a <span class="rule-item-mime"> element.
+function buildMimeSpan(mime) {
+  const slash   = mime.indexOf('/');
+  const wrapper = document.createElement('span');
+  wrapper.className = 'rule-item-mime';
+  if (slash === -1) {
+    wrapper.textContent = mime;
+  } else {
+    const prefix = document.createElement('span');
+    prefix.className   = 'mime-prefix';
+    prefix.textContent = mime.slice(0, slash + 1);
+    wrapper.appendChild(prefix);
+    wrapper.appendChild(document.createTextNode(mime.slice(slash + 1)));
+  }
+  return wrapper;
+}
+
+// Builds a DocumentFragment with the query term wrapped in <span class="match-highlight">.
+// Used in the search dropdown to highlight matched substrings.
+function buildHighlightedLabel(mime, query) {
+  const frag = document.createDocumentFragment();
+  const idx  = mime.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) {
+    frag.appendChild(document.createTextNode(mime));
+    return frag;
+  }
+  frag.appendChild(document.createTextNode(mime.slice(0, idx)));
+  const mark = document.createElement('span');
+  mark.className   = 'match-highlight';
+  mark.textContent = mime.slice(idx, idx + query.length);
+  frag.appendChild(mark);
+  frag.appendChild(document.createTextNode(mime.slice(idx + query.length)));
+  return frag;
 }
 
 // Renderers
@@ -798,38 +820,80 @@ function renderRuleList() {
   const ul    = el('rule-list');
   const rules = activeRules();
   const label = state.mode === 'allowlist' ? 'allowed' : 'blocked';
+
+  ul.replaceChildren();
+
   if (rules.length === 0) {
-    ul.innerHTML = `<li style="padding:8px;text-align:center;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)">No ${label} types defined.</li>`;
+    const li = document.createElement('li');
+    li.style.cssText = 'padding:8px;text-align:center;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)';
+    li.textContent = `No ${label} types defined.`;
+    ul.appendChild(li);
     return;
   }
-  ul.innerHTML = rules.map((mime, idx) => `
-    <li class="rule-item">
-      <span class="rule-item-mime">${highlightMime(mime)}</span>
-      <button class="rule-delete" data-idx="${idx}" title="Remove rule">✕</button>
-    </li>
-  `).join('');
+
+  rules.forEach((mime, idx) => {
+    const li  = document.createElement('li');
+    li.className = 'rule-item';
+
+    const btn = document.createElement('button');
+    btn.className    = 'rule-delete';
+    btn.dataset.idx  = idx;
+    btn.title        = 'Remove rule';
+    btn.textContent  = '✕';
+
+    li.appendChild(buildMimeSpan(mime));
+    li.appendChild(btn);
+    ul.appendChild(li);
+  });
 }
 
 function renderLog() {
   const list  = el('log-list');
   const empty = el('log-empty');
   el('log-count').textContent = `${state.log.length} entr${state.log.length === 1 ? 'y' : 'ies'}`;
+
+  list.replaceChildren();
+
   if (state.log.length === 0) {
-    list.innerHTML = '';
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
-  list.innerHTML = state.log.map(entry => `
-    <li class="log-entry ${escHtml(entry.status)}">
-      <div class="log-entry-top">
-        <span class="log-badge">${escHtml(entry.status)}</span>
-        <span class="log-ts">${formatTs(entry.timestamp)}</span>
-      </div>
-      <div class="log-mime">${highlightMime(entry.mimeType || 'unknown')}</div>
-      <div class="log-url" title="${escHtml(entry.url)}">${escHtml(shortUrl(entry.url))}</div>
-    </li>
-  `).join('');
+
+  state.log.forEach(entry => {
+    const status = entry.status === 'blocked' ? 'blocked' : 'allowed';
+
+    const li = document.createElement('li');
+    li.className = `log-entry ${status}`;
+
+    const top = document.createElement('div');
+    top.className = 'log-entry-top';
+
+    const badge = document.createElement('span');
+    badge.className   = 'log-badge';
+    badge.textContent = entry.status;
+
+    const ts = document.createElement('span');
+    ts.className   = 'log-ts';
+    ts.textContent = formatTs(entry.timestamp);
+
+    top.appendChild(badge);
+    top.appendChild(ts);
+
+    const mimeDiv = document.createElement('div');
+    mimeDiv.className = 'log-mime';
+    mimeDiv.appendChild(buildMimeSpan(entry.mimeType || 'unknown'));
+
+    const urlDiv = document.createElement('div');
+    urlDiv.className   = 'log-url';
+    urlDiv.title       = entry.url;
+    urlDiv.textContent = shortUrl(entry.url);
+
+    li.appendChild(top);
+    li.appendChild(mimeDiv);
+    li.appendChild(urlDiv);
+    list.appendChild(li);
+  });
 }
 
 function renderSettings() {
@@ -882,41 +946,48 @@ function wireSearch() {
     return ALL_MIME_TYPES.filter(m => m.toLowerCase().includes(q)).slice(0, 60);
   }
 
-  function highlightTerm(mime, query) {
-    const idx = mime.toLowerCase().indexOf(query.toLowerCase());
-    if (idx === -1) return escHtml(mime);
-    return escHtml(mime.slice(0, idx))
-      + `<span class="match-highlight">${escHtml(mime.slice(idx, idx + query.length))}</span>`
-      + escHtml(mime.slice(idx + query.length));
-  }
-
   function renderDropdown(query) {
     const matches = getMatches(query);
-    lastQuery     = query;
-    highlighted   = -1;
+    lastQuery   = query;
+    highlighted = -1;
+
     if (matches.length === 0) {
       closeDropdown();
       return;
     }
+
     const existing = new Set(activeRules().map(r => r.toLowerCase()));
-    dropdown.innerHTML = matches.map((mime, i) => {
+    dropdown.replaceChildren();
+
+    matches.forEach((mime, i) => {
       const added = existing.has(mime.toLowerCase());
-      return `<li class="search-result ${added ? 'is-added' : 'is-missing'}"
-                  data-mime="${escHtml(mime)}" data-idx="${i}">
-                <span class="sr-label">${highlightTerm(mime, query)}</span>
-                <button class="sr-action ${added ? 'sr-remove' : 'sr-add'}"
-                        data-mime="${escHtml(mime)}"
-                        title="${added ? 'Remove from rules' : 'Add to rules'}">
-                  ${added ? '−' : '+'}
-                </button>
-              </li>`;
-    }).join('');
+
+      const li = document.createElement('li');
+      li.className    = `search-result ${added ? 'is-added' : 'is-missing'}`;
+      li.dataset.mime = mime;
+      li.dataset.idx  = i;
+
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'sr-label';
+      labelSpan.appendChild(buildHighlightedLabel(mime, query));
+
+      const actionBtn = document.createElement('button');
+      actionBtn.className    = `sr-action ${added ? 'sr-remove' : 'sr-add'}`;
+      actionBtn.dataset.mime = mime;
+      actionBtn.title        = added ? 'Remove from rules' : 'Add to rules';
+      actionBtn.textContent  = added ? '−' : '+';
+
+      li.appendChild(labelSpan);
+      li.appendChild(actionBtn);
+      dropdown.appendChild(li);
+    });
+
     dropdown.classList.add('open');
   }
 
   function closeDropdown() {
     dropdown.classList.remove('open');
-    dropdown.innerHTML = '';
+    dropdown.replaceChildren();
     highlighted = -1;
   }
 
@@ -926,7 +997,6 @@ function wireSearch() {
     const oppositeList = state.mode === 'allowlist' ? state.denylistRules : state.allowlistRules;
 
     // Normalise to lowercase before deduplication so that e.g. "Image/PNG" is not treated as distinct from an existing "image/png" rule
-
     const normalised = mime.toLowerCase();
     if (activeRules().some(r => r.toLowerCase() === normalised)) return;
 
@@ -963,14 +1033,13 @@ function wireSearch() {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       highlighted = Math.min(highlighted + 1, items.length - 1);
-      items.forEach((el, i) => el.classList.toggle('highlighted', i === highlighted));
+      items.forEach((item, i) => item.classList.toggle('highlighted', i === highlighted));
       if (items[highlighted]) input.value = items[highlighted].dataset.mime;
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       // Floor was 0, trapping the cursor on the first item forever. Allow decrement to -1 which means "no item selected, restore free text"
-
       highlighted = Math.max(highlighted - 1, -1);
-      items.forEach((el, i) => el.classList.toggle('highlighted', i === highlighted));
+      items.forEach((item, i) => item.classList.toggle('highlighted', i === highlighted));
       if (highlighted >= 0) {
         input.value = items[highlighted].dataset.mime;
       }
@@ -1065,7 +1134,6 @@ function wireEvents() {
       a.download = `mime-filter-log-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       // Revoking immediately after click() races with the browser's async blob read and can produce an empty download, especially in Firefox
-
       setTimeout(() => URL.revokeObjectURL(url), 100);
     });
   });
@@ -1127,9 +1195,8 @@ async function addRuleFromInput() {
   const oppositeKey  = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
   const oppositeList = state.mode === 'allowlist' ? state.denylistRules : state.allowlistRules;
 
-  // FIX 4: case-insensitive duplicate guard
   if (!activeRules().some(r => r.toLowerCase() === value)) {
-    // FIX 4: case-insensitive opposite-list removal
+    // Case-insensitive opposite-list removal
     const oppIdx = oppositeList.findIndex(r => r.toLowerCase() === value);
     if (oppIdx !== -1) oppositeList.splice(oppIdx, 1);
     activeRules().push(value);

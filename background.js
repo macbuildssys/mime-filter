@@ -835,6 +835,14 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 
     if (!enabled) return;
 
+    // Skip internal browser resource URLs  
+    if (downloadItem.url.startsWith('resource://') ||
+       downloadItem.url.startsWith('chrome://') ||
+       downloadItem.url.startsWith('moz-extension://') ||
+       downloadItem.url.startsWith('chrome-extension://')) {
+     return;
+    }
+
     const mimeType = downloadItem.mime || '';
 
     if (!mimeType) {
