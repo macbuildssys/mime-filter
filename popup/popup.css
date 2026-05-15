@@ -1,4 +1,4 @@
-/*  MIME Filter Popup — Design: Industrial Terminal 
+/*  MIME Filter Popup. Design: Industrial Terminal 
  *  Palette: charcoal bg · amber accent · pale mono text
  *   Fonts: IBM Plex Mono (code/labels) · IBM Plex Sans (body)
 */
@@ -556,3 +556,22 @@ html, body { width: var(--popup-w); background: var(--bg); color: var(--text); f
 .sr-remove:hover { background: rgba(224,82,82,.15); border-color: var(--red); }
 .search-result.is-added .sr-label { color: var(--text); }
 .search-result.is-missing .sr-label { color: var(--text-dim); }
+
+/* Rules panel height constraint */
+
+#panel-rules {
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.rule-list {
+  max-height: 140px;
+}
+
+.rule-item-mime {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+

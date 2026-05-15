@@ -185,11 +185,7 @@ no match=block  no match=allow
 
 ## Limitations
 
-- The extension trusts the `Content-Type` header as reported by the browser; it does not perform deep file inspection.
-
 - In Chrome MV3, service workers may be suspended between events. The extension uses `chrome.storage.local` (not in-memory state) to ensure settings survive suspension.
-
-- Downloads initiated by the browser itself (internal pages, extension updates) are not intercepted.
 
 
 ## License
