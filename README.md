@@ -6,30 +6,11 @@
 <p align="center" style="margin-top:-90px"><em>Block what doesn't belong. Allow what does.</em></p>
 
 
-A cross-browser extension for **Chrome**, **Firefox**, and **LibreWolf** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
+A cross-browser extension for **Firefox**, **Tor**, and **LibreWolf** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
 
 ## Installation
 
-### Chrome (unpacked)
-
-1. Open `chrome://extensions` (or `about:addons` in LibreWolf).
-
-2. Enable **Developer mode** (top-right toggle).
-
-3. Click **Load unpacked** → select the `mime-filter-ext/` folder.
-
-4. The ⬡ icon appears in the toolbar.
-
-### Firefox/LibreWolf (temporary install)
-
-
-1. Open `about:debugging#/runtime/this-firefox`.
-
-2. Click **Load Temporary Add-on** → select `manifest.json` inside `mime-filter-ext/`.
-
-3. The extension is active until Firefox restarts.
-
-### Firefox/LibreWolf (signed .xpi — permanent install)
+## Firefox/Tor/LibreWolf (signed .xpi)
 
 1. Download the latest `.xpi` file from the [Releases](https://github.com/macbuildssys/mime-filter/releases) page.
 
@@ -172,7 +153,7 @@ no match=block  no match=allow
 
 ## Browser Compatibility
 
-| Feature | Chrome MV3 | Firefox MV3 | LibreWolf |
+| Feature | Firefox MV3 | Tor | LibreWolf |
 |---------|-----------|-------------|-----------|
 | Download interception | ✅ | ✅ | ✅ |
 | Cancel download | ✅ | ✅ | ✅ |
@@ -183,9 +164,9 @@ no match=block  no match=allow
 > **Note:** Firefox requires the `browser_specific_settings.gecko.id` field in `manifest.json`; this is already included.
 
 
-## Limitations
+## Roadmap
 
-- In Chrome MV3, service workers may be suspended between events. The extension uses `chrome.storage.local` (not in-memory state) to ensure settings survive suspension.
+- Chrome Web Store release — a signed Chrome Web Store listing is planned. Once submitted and approved by Google, Chrome users will be able to install it. The listing will be linked here when live.
 
 
 ## License
