@@ -1145,25 +1145,49 @@ function wireEvents() {
     });
   });
 
+  // el('allow-all-btn').addEventListener('click', async () => {
+  //   const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+  //   if (state.mode === 'allowlist') {
+  //     state.allowlistRules = [...ALL_MIME_TYPES];
+  //   } else {
+  //     state.denylistRules = [...ALL_MIME_TYPES];
+  //   }
+  //   await persist({ [key]: activeRules() });
+  //   renderRuleList();
+  // });
+
+
   el('allow-all-btn').addEventListener('click', async () => {
-    const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
     if (state.mode === 'allowlist') {
       state.allowlistRules = [...ALL_MIME_TYPES];
+      state.denylistRules  = [];
     } else {
-      state.denylistRules = [...ALL_MIME_TYPES];
+      state.denylistRules  = [...ALL_MIME_TYPES];
+      state.allowlistRules = [];
     }
-    await persist({ [key]: activeRules() });
+    await persist({ allowlistRules: state.allowlistRules, denylistRules: state.denylistRules });
     renderRuleList();
   });
 
+
+  // el('none-btn').addEventListener('click', async () => {
+  //   const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+  //   if (state.mode === 'allowlist') {
+  //     state.allowlistRules = [];
+  //   } else {
+  //     state.denylistRules = [];
+  //   }
+  //   await persist({ [key]: activeRules() });
+  //   renderRuleList();
+  // });
+
   el('none-btn').addEventListener('click', async () => {
-    const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
     if (state.mode === 'allowlist') {
       state.allowlistRules = [];
     } else {
       state.denylistRules = [];
     }
-    await persist({ [key]: activeRules() });
+    await persist({ allowlistRules: state.allowlistRules, denylistRules: state.denylistRules });
     renderRuleList();
   });
 
