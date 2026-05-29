@@ -159,7 +159,7 @@ no match=block  no match=allow
 | Cancel download | ✅ | ✅ | ✅ |
 | Notifications | ✅ | ✅ | ✅ |
 | Persistent storage | ✅ | ✅ | ✅ |
-| Service worker | ✅ | ✅ (109+) | ✅ |
+| Service worker | ✅ | ✅  | ✅ |
 
 > **Note:** Firefox requires the `browser_specific_settings.gecko.id` field in `manifest.json`; this is already included.
 
