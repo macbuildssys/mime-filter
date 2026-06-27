@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MIME Filter",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "Intercept and filter browser downloads by MIME type. Allow or block file types with logging and notifications.",
   "author": "macbuildssys",
 
@@ -37,7 +37,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "mime-filter@macbuildssys.github.io",
-      "strict_min_version": "142.0",
+      "strict_min_version": "109.0",
       "data_collection_permissions": {
         "required": ["none"],
         "optional": []

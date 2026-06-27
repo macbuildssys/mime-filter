@@ -1,12 +1,11 @@
 /**
  * MIME Filter: Popup UI
- * Lightweight reactive UI. State is centralised and render functions re-run on every change.
+ * Lightweight reactive UI. State is centralised and render functions re-run on every change
  */
 
 'use strict';
 
 // State
-
 const state = {
   enabled:         true,
   mode:            'allowlist',
@@ -743,7 +742,6 @@ async function persist(partial) {
 }
 
 // DOM helpers
-
 function el(id) { return document.getElementById(id); }
 
 function formatTs(iso) {
@@ -762,8 +760,7 @@ function shortUrl(url) {
   } catch { return (url || '').slice(0, 50); }
 }
 
-// Builds a MIME span with the prefix highlighted in amber, using DOM methods.
-// Returns a <span class="rule-item-mime"> element.
+// Builds a MIME span with the prefix highlighted in amber, using DOM methods. Returns a <span class="rule-item-mime"> element.
 function buildMimeSpan(mime) {
   const slash   = mime.indexOf('/');
   const wrapper = document.createElement('span');
@@ -780,8 +777,8 @@ function buildMimeSpan(mime) {
   return wrapper;
 }
 
-// Builds a DocumentFragment with the query term wrapped in <span class="match-highlight">.
-// Used in the search dropdown to highlight matched substrings.
+// Builds a DocumentFragment with the query term wrapped in <span class="match-highlight">
+// Used in the search dropdown to highlight matched substrings
 function buildHighlightedLabel(mime, query) {
   const frag = document.createDocumentFragment();
   const idx  = mime.toLowerCase().indexOf(query.toLowerCase());
@@ -799,7 +796,6 @@ function buildHighlightedLabel(mime, query) {
 }
 
 // Renderers
-
 function renderToggle() {
   const checkbox = el('toggle-enabled');
   const label    = el('toggle-label');
@@ -814,6 +810,20 @@ function renderModeSelector() {
   el('mode-hint').textContent = state.mode === 'allowlist'
     ? 'Only listed MIME types are allowed through.'
     : 'Listed MIME types are blocked; everything else passes.';
+}
+
+// Keeps the bulk-action button label in sync with the current mode
+// In allowlist mode, filling the list means "everything is allowed" -> "Allow All"
+// In denylist mode, filling the list means "everything is blocked" -> "Deny All"
+function renderBulkButtons() {
+  const allBtn = el('allow-all-btn');
+  if (state.mode === 'allowlist') {
+    allBtn.textContent = 'Allow All';
+    allBtn.title       = 'Add every MIME type to the allowlist';
+  } else {
+    allBtn.textContent = 'Deny All';
+    allBtn.title       = 'Add every MIME type to the denylist';
+  }
 }
 
 function renderRuleList() {
@@ -907,13 +917,13 @@ function renderSettings() {
 function renderAll() {
   renderToggle();
   renderModeSelector();
+  renderBulkButtons();
   renderRuleList();
   renderLog();
   renderSettings();
 }
 
 // Tabs
-
 function switchTab(tabId) {
   state.activeTab = tabId;
   document.querySelectorAll('.tab').forEach(t =>
@@ -923,8 +933,7 @@ function switchTab(tabId) {
   if (tabId === 'log') refreshLog();
 }
 
-// Removed spurious `async` — the body uses a callback, not await, so the keyword was misleading and the returned promise resolved immediately
-
+// Removed spurious 'async' the body uses a callback, not await, so the keyword was misleading and the returned promise resolved immediately
 function refreshLog() {
   chrome.storage.local.get('downloadLog', data => {
     state.log = data.downloadLog || [];
@@ -933,7 +942,6 @@ function refreshLog() {
 }
 
 // Search dropdown
-
 function wireSearch() {
   const input    = el('rule-input');
   const dropdown = el('search-dropdown');
@@ -1071,7 +1079,6 @@ function wireSearch() {
 }
 
 // Event wiring
-
 function wireEvents() {
 
   document.querySelectorAll('.tab').forEach(btn =>
@@ -1088,6 +1095,7 @@ function wireEvents() {
       state.mode = btn.dataset.mode;
       await persist({ mode: state.mode });
       renderModeSelector();
+      renderBulkButtons();
       renderRuleList();
     }));
 
@@ -1145,18 +1153,7 @@ function wireEvents() {
     });
   });
 
-  // el('allow-all-btn').addEventListener('click', async () => {
-  //   const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
-  //   if (state.mode === 'allowlist') {
-  //     state.allowlistRules = [...ALL_MIME_TYPES];
-  //   } else {
-  //     state.denylistRules = [...ALL_MIME_TYPES];
-  //   }
-  //   await persist({ [key]: activeRules() });
-  //   renderRuleList();
-  // });
-
-
+  // "Allow All" / "Deny All": label changes per mode via renderBulkButtons(), but the underlying behaviour is always: fill the list that's active for the current mode with every MIME type
   el('allow-all-btn').addEventListener('click', async () => {
     if (state.mode === 'allowlist') {
       state.allowlistRules = [...ALL_MIME_TYPES];
@@ -1169,18 +1166,7 @@ function wireEvents() {
     renderRuleList();
   });
 
-
-  // el('none-btn').addEventListener('click', async () => {
-  //   const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
-  //   if (state.mode === 'allowlist') {
-  //     state.allowlistRules = [];
-  //   } else {
-  //     state.denylistRules = [];
-  //   }
-  //   await persist({ [key]: activeRules() });
-  //   renderRuleList();
-  // });
-
+  // "None": empties whichever list is active for the current mode.
   el('none-btn').addEventListener('click', async () => {
     if (state.mode === 'allowlist') {
       state.allowlistRules = [];
@@ -1201,7 +1187,6 @@ function wireEvents() {
 }
 
 // Add rule from raw input (for custom / unlisted types)
-
 async function addRuleFromInput() {
   const input = el('rule-input');
   const raw   = input.value.trim();
@@ -1214,7 +1199,6 @@ async function addRuleFromInput() {
 
   // Normalise to lowercase so the rule list stays consistent with what the background's matchesMimeRule sees after its own toLowerCase()
   const value = raw.toLowerCase();
-
   const activeKey    = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
   const oppositeKey  = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
   const oppositeList = state.mode === 'allowlist' ? state.denylistRules : state.allowlistRules;
@@ -1233,7 +1217,6 @@ async function addRuleFromInput() {
 }
 
 // Boot
-
 (async () => {
   await loadState();
   renderAll();
