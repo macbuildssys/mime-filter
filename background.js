@@ -928,6 +928,13 @@ function handleDownload(item, state, mimeType) {
     if (notifyOn) notify('Download Blocked', mimeType + '\n' + shortUrl(item.url));
     console.info('[MIME Filter] BLOCKED:', mimeType, item.url);
   } else {
+    /*
+    This item was paused the instant it was created (see onCreated below)
+    as a safety net, so an allowed download must be explicitly resumed.
+    If it already finished before the pause landed, resume() just fails
+    quietly (chrome.runtime.lastError) — the file is allowed anyway, so that's not a problem.
+    */
+    chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
     if (mimeRules.length > 0) {
       var okReason = mode === 'allowlist'
         ? 'MIME type "' + mimeType + '" matched allowlist rule'
@@ -938,54 +945,202 @@ function handleDownload(item, state, mimeType) {
   }
 }
 
-chrome.downloads.onCreated.addListener(function(item) {
-  chrome.storage.local.get(null, function(state) {
-    if (!state.enabled) return;
+var STATE_KEYS = ['enabled', 'mode', 'allowlistRules', 'denylistRules', 'notifyOn', 'unknownBlock'];
 
-    var url      = item.url      || '';
-    var filename = item.filename || '';
+/*
+ In-memory settings cache.
 
-    // Skip purely internal browser URLs (settings pages, extension pages etc)
-    if (isHardInternalUrl(url)) return;
+   The webRequest blocking listener below MUST decide synchronously.
+   Firefox-family browsers only hold an in-flight request open for an
+   async ("Promise-returning") blocking listener for a limited window; 
+   if the listener hasn't resolved by then, the browser gives up waiting
+   and lets the request through unmodified, while the listener's own JS
+   keeps running to completion regardless. That's precisely why, on
+   LibreWolf, the "blocked" notification could still fire (the extension's
+   logic finished and decided to block) while the file downloaded anyway
+   (the network layer had already stopped waiting on our await'd
+   chrome.storage.local.get() call and moved on). LibreWolf's extra
+   process/scheduling overhead vs. plain Firefox was enough to tip that
+   timing over in your test.
 
-    var mimeType = item.mime || '';
+   The fix is to never await anything on the hot path: keep a plain
+   in-memory copy of the settings that's populated at startup and kept
+   current via chrome.storage.onChanged, so the listener can read it and
+   return {cancel:true} in the same tick the headers arrive — no timeout
+   window to lose the race against, on any Firefox-based browser.
+*/
 
-    // For blob URLs and non-http URLs, try to derive MIME from filename first
-    var isBlobOrInternal = url.startsWith('blob:') || (!url.startsWith('http://') && !url.startsWith('https://'));
+var cachedState = {
+  enabled:        false,
+  mode:           'allowlist',
+  allowlistRules: [],
+  denylistRules:  [],
+  notifyOn:       true,
+  unknownBlock:   true,
+};
 
-    if (!mimeType && isBlobOrInternal) {
-      mimeType = mimeFromFilename(filename) || '';
-    }
-
-    if (mimeType) {
-      handleDownload(item, state, mimeType);
-      return;
-    }
-
-    // Still no MIME — try magic byte detection for http/https URLs
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      detectMimeFromBytes(url, function(detected) {
-        if (detected) {
-          handleDownload(item, state, detected);
-        } else if (state.unknownBlock !== false) {
-          chrome.downloads.cancel(item.id);
-          setTimeout(function() { chrome.downloads.erase({ id: item.id }); }, 500);
-          appendLog(buildEntry(item, 'blocked', 'No MIME type and magic bytes unrecognised (unknown-block ON)', 'unknown'));
-          if (state.notifyOn !== false) notify('Download Blocked', 'unknown/unknown\n' + shortUrl(url));
-        } else {
-          appendLog(buildEntry(item, 'allowed', 'No MIME type and magic bytes unrecognised (unknown-block OFF)', 'unknown'));
-        }
-      });
-    } else if (state.unknownBlock !== false) {
-      // blob/internal with no filename match and no fetchable URL
-      chrome.downloads.cancel(item.id);
-      setTimeout(function() { chrome.downloads.erase({ id: item.id }); }, 500);
-      appendLog(buildEntry(item, 'blocked', 'No MIME type detected (unknown-block ON)', 'unknown'));
-      if (state.notifyOn !== false) notify('Download Blocked', 'unknown/unknown\n' + filename);
-    } else {
-      appendLog(buildEntry(item, 'allowed', 'No MIME type detected (unknown-block OFF)', 'unknown'));
-    }
+function refreshCachedState(callback) {
+  chrome.storage.local.get(STATE_KEYS, function(data) {
+    cachedState.enabled        = !!data.enabled;
+    cachedState.mode           = data.mode || 'allowlist';
+    cachedState.allowlistRules = data.allowlistRules || [];
+    cachedState.denylistRules  = data.denylistRules  || [];
+    cachedState.notifyOn       = data.notifyOn     !== false;
+    cachedState.unknownBlock   = data.unknownBlock !== false;
+    if (callback) callback();
   });
+}
+
+// Populate the cache as soon as this script runs; covers browser startup, extension (re)load, and MV3 background-script wake-ups.
+refreshCachedState();
+
+// Keep the cache current the instant the popup changes any setting.
+chrome.storage.onChanged.addListener(function(changes, area) {
+  if (area !== 'local') return;
+  if (changes.enabled)        cachedState.enabled        = !!changes.enabled.newValue;
+  if (changes.mode)           cachedState.mode           = changes.mode.newValue || 'allowlist';
+  if (changes.allowlistRules) cachedState.allowlistRules = changes.allowlistRules.newValue || [];
+  if (changes.denylistRules)  cachedState.denylistRules  = changes.denylistRules.newValue  || [];
+  if (changes.notifyOn)       cachedState.notifyOn       = changes.notifyOn.newValue     !== false;
+  if (changes.unknownBlock)   cachedState.unknownBlock   = changes.unknownBlock.newValue !== false;
+});
+
+/*
+  PRIMARY BLOCKING PATH: pre-flight via webRequest.
+
+  chrome.downloads.onCreated (the fallback below) only fires AFTER the
+  browser has already started saving the file, so cancelling from there
+  is a race: small/fast files can finish writing to disk before a check
+  completes, and once a download is "complete" cancel() is a silent
+  no-op. That was the original cause of denied MIME types still completing.
+
+  webRequest.onHeadersReceived fires as soon as response headers arrive,
+  before any response body reaches disk or the download manager creates
+  an entry at all, and this listener now decides synchronously using
+  cachedState (see above) — no await, so no timeout to lose.
+
+  Scope is deliberately limited to "main_frame"/"sub_frame" requests only
+  (i.e. requests that could plausibly become a saved file), NOT every
+  sub-resource a page loads — otherwise blocking e.g. "text/css" or
+  "application/json" would break ordinary web pages that use those content types internally.
+*/
+
+function extractFilenameFromHeaders(headers, url) {
+  var cd = headers.find(function(h) { return h.name.toLowerCase() === 'content-disposition'; });
+  if (cd && cd.value) {
+    var m = /filename\*?=(?:UTF-8'')?"?([^;"]+)"?/i.exec(cd.value);
+    if (m && m[1]) {
+      try { return decodeURIComponent(m[1].trim()); } catch (e) { return m[1].trim(); }
+    }
+  }
+  try {
+    var p = new URL(url).pathname;
+    return p.substring(p.lastIndexOf('/') + 1) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function onHeadersReceivedHandler(details) {
+  if (details.type !== 'main_frame' && details.type !== 'sub_frame') return {};
+  if (!cachedState.enabled) return {};
+
+  var headers  = details.responseHeaders || [];
+  var ctHeader = headers.find(function(h) { return h.name.toLowerCase() === 'content-type'; });
+  if (!ctHeader || !ctHeader.value) return {}; // nothing to judge yet — onCreated + magic-byte fallback covers this
+
+  var mimeType = ctHeader.value.split(';')[0].trim().toLowerCase();
+  var mode     = cachedState.mode;
+  var rules    = getMimeRules(cachedState);
+  var allowed  = isAllowed(mimeType, mode, rules);
+
+  if (allowed) return {}; // let it through; onCreated logs the "allowed" entry once the download item actually exists
+
+  var filename    = extractFilenameFromHeaders(headers, details.url);
+  var pseudoItem  = { id: 'net-' + details.requestId, url: details.url, filename: filename };
+  var reason = mode === 'allowlist'
+    ? 'MIME type "' + mimeType + '" is not in the allowlist'
+    : 'MIME type "' + mimeType + '" is in the denylist';
+
+  // Logging/notifying are fire-and-forget and happen AFTER the decision to cancel is already made; they never delay the return below
+  appendLog(buildEntry(pseudoItem, 'blocked', reason, mimeType));
+  if (cachedState.notifyOn) notify('Download Blocked', mimeType + '\n' + shortUrl(details.url));
+  console.info('[MIME Filter] BLOCKED (pre-flight):', mimeType, details.url);
+
+  return { cancel: true };
+}
+
+chrome.webRequest.onHeadersReceived.addListener(
+  onHeadersReceivedHandler,
+  { urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame'] },
+  ['blocking', 'responseHeaders']
+);
+
+/*
+  FALLBACK PATH: chrome.downloads.onCreated.
+  blob:/data: downloads never touch the network, so webRequest above can
+  never see them — this listener is the only place that can catch those.
+  It also acts as defense-in-depth for any http/https download that 
+  somehow reaches this point despite the pre-flight check (e.g. no Content-Type header at all, 
+  requiring magic-byte sniffing).
+  This now reads cachedState directly (synchronous, no storage round
+  trip needed at all), and additionally pauses the item as the very
+  first action for the one remaining async step — magic-byte sniffing
+  over the network — so there is no unprotected window even there.
+*/
+
+chrome.downloads.onCreated.addListener(function(item) {
+  var url      = item.url      || '';
+  var filename = item.filename || '';
+
+  if (isHardInternalUrl(url)) return;
+
+  chrome.downloads.pause(item.id, function() { void chrome.runtime.lastError; });
+
+  if (!cachedState.enabled) {
+    chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
+    return;
+  }
+
+  var mimeType = item.mime || '';
+
+  // For blob URLs and non-http URLs, try to derive MIME from filename first
+  var isBlobOrInternal = url.startsWith('blob:') || (!url.startsWith('http://') && !url.startsWith('https://'));
+
+  if (!mimeType && isBlobOrInternal) {
+    mimeType = mimeFromFilename(filename) || '';
+  }
+
+  if (mimeType) {
+    handleDownload(item, cachedState, mimeType);
+    return;
+  }
+
+  // Still no MIME, try magic byte detection for http/https URLs
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    detectMimeFromBytes(url, function(detected) {
+      if (detected) {
+        handleDownload(item, cachedState, detected);
+      } else if (cachedState.unknownBlock) {
+        chrome.downloads.cancel(item.id);
+        setTimeout(function() { chrome.downloads.erase({ id: item.id }); }, 500);
+        appendLog(buildEntry(item, 'blocked', 'No MIME type and magic bytes unrecognised (unknown-block ON)', 'unknown'));
+        if (cachedState.notifyOn) notify('Download Blocked', 'unknown/unknown\n' + shortUrl(url));
+      } else {
+        chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
+        appendLog(buildEntry(item, 'allowed', 'No MIME type and magic bytes unrecognised (unknown-block OFF)', 'unknown'));
+      }
+    });
+  } else if (cachedState.unknownBlock) {
+    // blob/internal with no filename match and no fetchable URL
+    chrome.downloads.cancel(item.id);
+    setTimeout(function() { chrome.downloads.erase({ id: item.id }); }, 500);
+    appendLog(buildEntry(item, 'blocked', 'No MIME type detected (unknown-block ON)', 'unknown'));
+    if (cachedState.notifyOn) notify('Download Blocked', 'unknown/unknown\n' + filename);
+  } else {
+    chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
+    appendLog(buildEntry(item, 'allowed', 'No MIME type detected (unknown-block OFF)', 'unknown'));
+  }
 });
 
 function clearAllNotifications() {
@@ -995,10 +1150,12 @@ function clearAllNotifications() {
 }
 
 chrome.runtime.onInstalled.addListener(function() {
+  refreshCachedState();
   clearAllNotifications();
 });
 
 chrome.runtime.onStartup.addListener(function() {
+  refreshCachedState();
   clearAllNotifications();
 });
 
