@@ -5,26 +5,49 @@
 </p>
 <p align="center" style="margin-top:-90px"><em>Block what doesn't belong. Allow what does.</em></p>
 
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb">
+    <img src="https://img.shields.io/badge/Chrome%20Web%20Store-Available-4285F4?logo=googlechrome&logoColor=white" alt="Available on the Chrome Web Store" />
+  </a>
+  <img src="https://img.shields.io/badge/Free-forever-2f9e6e" alt="Free forever" />
+</p>
 
-A cross-browser extension for **Firefox**, **Tor**, and **LibreWolf** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
+A cross-browser extension for **Chrome**, **Microsoft Edge**, **Firefox**, **LibreWolf**, and **Tor** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
+
+**MIME Filter is now live on the Chrome Web Store** → [Get it here](https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb). No developer mode, no manual loading, just install and go. If you're already using it, a quick rating on the store page helps other people find it.
 
 ## Installation
 
-## Firefox/Tor/LibreWolf (signed .xpi)
+### Google Chrome (Chrome Web Store)
+
+1. Visit the [Chrome Web Store listing](https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb).
+2. Click **Add to Chrome**.
+3. The ⬡ icon appears in the toolbar. Done.
+
+### Microsoft Edge (from the Chrome Web Store)
+
+1. Visit the [Chrome Web Store listing](https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb) in Edge.
+2. Click **Add to Chrome**. Edge will prompt you to confirm installing an extension from another store, click **Allow extension from other stores** (or enable it once in `edge://extensions` if you don't see the prompt).
+3. Click **Add extension** to confirm.
+4. The ⬡ icon appears in the toolbar.
+
+### Firefox/LibreWolf (signed .xpi — permanent install)
 
 1. Download the latest `.xpi` file from the [Releases](https://github.com/macbuildssys/mime-filter/releases) page.
-
 2. Open Firefox and go to `about:addons`.
-
 3. Click the gear icon ⚙️ → **Install Add-on From File…**
-
 4. Select the downloaded `.xpi` file.
-
 5. Click **Add** when prompted.
 
 The extension will persist across Firefox restarts and update when you install a newer `.xpi`.
 
-For LibreWolf, the steps are identical — the signed `.xpi` works without any config changes.
+For LibreWolf and Tor, the steps are identical, the signed `.xpi` works without any config changes.
+
+### Firefox/LibreWolf (temporary install)
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on** → select `manifest.json` inside `mime-filter/`.
+3. The extension is active until Firefox restarts.
 
 
 ## Usage
@@ -43,7 +66,6 @@ The **ON/OFF** toggle in the header enables or disables all download filtering. 
 ### Adding Rules
 
 1. Type a MIME type or prefix into the input field and press **Enter** or click **＋**.
-
 2. Or click a **Quick add** tag for common types.
 
 Rules are **prefix-matched** (case-insensitive), mirroring the `strncasecmp` logic from `SAutotransferMime.cxx`:
@@ -60,15 +82,11 @@ Rules are **prefix-matched** (case-insensitive), mirroring the `strncasecmp` log
 The **Log** tab shows all intercepted downloads, newest first. Each entry records:
 
 - Status: `blocked` or `allowed`
-
 - MIME type detected by the browser
-
 - Source URL
-
 - Timestamp
 
 Click **Export JSON** to download the full log as a `.json` file.
-
 
 ## Sample MIME Type Rules
 
@@ -153,22 +171,23 @@ no match=block  no match=allow
 
 ## Browser Compatibility
 
-| Feature | Firefox MV3 | Tor | LibreWolf |
-|---------|-----------|-------------|-----------|
-| Download interception | ✅ | ✅ | ✅ |
-| Cancel download | ✅ | ✅ | ✅ |
-| Notifications | ✅ | ✅ | ✅ |
-| Persistent storage | ✅ | ✅ | ✅ |
-| Service worker | ✅ | ✅  | ✅ |
+| Feature | Chrome MV3 | Mcrosoft Edge MV3 | Firefox MV3 | LibreWolf |
+|---------|-----------|----------|-------------|-----------|
+| Download interception | ✅ | ✅ | ✅ | ✅ |
+| Cancel download | ✅ | ✅ | ✅ | ✅ |
+| Notifications | ✅ | ✅ | ✅ | ✅ |
+| Persistent storage | ✅ | ✅ | ✅ | ✅ |
+| Service worker | ✅ | ✅ | ✅ (109+) | ✅ |
 
 > **Note:** Firefox requires the `browser_specific_settings.gecko.id` field in `manifest.json`; this is already included.
-
-
-## Roadmap
-
-- Chrome Web Store release — a signed Chrome Web Store listing is planned. Once submitted and approved by Google, Chrome users will be able to install it. The listing will be linked here when live.
-
 
 ## License
 
 Distributed under the MIT License. See [LICENSE](LICENSE).
+
+
+## Chrome Web Store poster
+
+<p align="center">
+  <img src="mime-filter-poster.png" alt="MIME Filter poster: a free browser guard that checks every download against rules you set" width="700" />
+</p>
