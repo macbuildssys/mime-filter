@@ -9,10 +9,25 @@
   <a href="https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb">
     <img src="https://img.shields.io/badge/Chrome%20Web%20Store-Available-4285F4?logo=googlechrome&logoColor=white" alt="Available on the Chrome Web Store" />
   </a>
+  <a href="https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb">
+    <img src="https://img.shields.io/badge/Microsoft%20Edge-Supported-0078D7?logo=microsoftedge&logoColor=white" alt="Supported on Microsoft Edge" />
+  </a>
+  <a href="https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb">
+    <img src="https://img.shields.io/badge/Brave-Supported-FB542B?logo=brave&logoColor=white" alt="Supported on Brave" />
+  </a>
+  <a href="https://github.com/macbuildssys/mime-filter/releases">
+    <img src="https://img.shields.io/badge/Firefox-Supported-FF7139?logo=firefoxbrowser&logoColor=white" alt="Supported on Firefox" />
+  </a>
+  <a href="https://github.com/macbuildssys/mime-filter/releases">
+    <img src="https://img.shields.io/badge/LibreWolf-Supported-16A085" alt="Supported on LibreWolf" />
+  </a>
+  <a href="https://github.com/macbuildssys/mime-filter/releases">
+    <img src="https://img.shields.io/badge/Tor%20Browser-Supported-7D4698?logo=torbrowser&logoColor=white" alt="Supported on Tor Browser" />
+  </a>
   <img src="https://img.shields.io/badge/Free-forever-2f9e6e" alt="Free forever" />
 </p>
 
-A cross-browser extension for **Chrome**, **Microsoft Edge**, **Firefox**, **LibreWolf**, and **Tor** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
+A cross-browser extension for **Chrome**, **Microsoft Edge**, **Brave**, **Firefox**, **LibreWolf**, and **Tor** that intercepts browser downloads and blocks or permits them based on user-defined MIME type rules.
 
 **MIME Filter is now live on the Chrome Web Store** → [Get it here](https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb). No developer mode, no manual loading, just install and go. If you're already using it, a quick rating on the store page helps other people find it.
 
@@ -31,7 +46,13 @@ A cross-browser extension for **Chrome**, **Microsoft Edge**, **Firefox**, **Lib
 3. Click **Add extension** to confirm.
 4. The ⬡ icon appears in the toolbar.
 
-### Firefox/LibreWolf (signed .xpi — permanent install)
+### Brave (from the Chrome Web Store)
+
+1. Visit the [Chrome Web Store listing](https://chromewebstore.google.com/detail/mime-filter/bhiclkpfmnjdemhamopgimkohlppbojb) in Brave.
+2. Click **Add to Chrome**, then **Add extension** to confirm. Brave installs it straight from the Chrome Web Store, no extra toggle needed.
+3. The ⬡ icon appears in the toolbar.
+
+### Firefox/LibreWolf/Tor (signed .xpi - permanent install)
 
 1. Download the latest `.xpi` file from the [Releases](https://github.com/macbuildssys/mime-filter/releases) page.
 2. Open Firefox and go to `about:addons`.
@@ -43,7 +64,7 @@ The extension will persist across Firefox restarts and update when you install a
 
 For LibreWolf and Tor, the steps are identical, the signed `.xpi` works without any config changes.
 
-### Firefox/LibreWolf (temporary install)
+### Firefox/LibreWolf/Tor (temporary install)
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click **Load Temporary Add-on** → select `manifest.json` inside `mime-filter/`.
@@ -171,13 +192,13 @@ no match=block  no match=allow
 
 ## Browser Compatibility
 
-| Feature | Chrome MV3 | Mcrosoft Edge MV3 | Firefox MV3 | LibreWolf |
-|---------|-----------|----------|-------------|-----------|
-| Download interception | ✅ | ✅ | ✅ | ✅ |
-| Cancel download | ✅ | ✅ | ✅ | ✅ |
-| Notifications | ✅ | ✅ | ✅ | ✅ |
-| Persistent storage | ✅ | ✅ | ✅ | ✅ |
-| Service worker | ✅ | ✅ | ✅ (109+) | ✅ |
+| Feature | Chrome MV3 | Microsoft Edge MV3 | Brave MV3 | Firefox MV3 | LibreWolf/Tor |
+|---------|-----------|---------------------|-----------|-------------|-----------|
+| Download interception | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Cancel download | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Notifications | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Persistent storage | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Service worker | ✅ | ✅ | ✅ | ✅ (109+) | ✅ |
 
 > **Note:** Firefox requires the `browser_specific_settings.gecko.id` field in `manifest.json`; this is already included.
 
