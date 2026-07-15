@@ -16,13 +16,13 @@
     <img src="https://img.shields.io/badge/Brave-Supported-FB542B?logo=brave&logoColor=white" alt="Supported on Brave" />
   </a>
   <a href="https://github.com/macbuildssys/mime-filter/releases">
-    <img src="https://img.shields.io/badge/Firefox-Supported-FF7139?logo=firefoxbrowser&logoColor=white" alt="Supported on Firefox" />
+    <img src="https://img.shields.io/badge/Firefox-Available-FF7139?logo=firefoxbrowser&logoColor=white" alt="Available on Firefox" />
   </a>
   <a href="https://github.com/macbuildssys/mime-filter/releases">
-    <img src="https://img.shields.io/badge/LibreWolf-Supported-16A085" alt="Supported on LibreWolf" />
+    <img src="https://img.shields.io/badge/LibreWolf-Available-16A085" alt="Available on LibreWolf" />
   </a>
   <a href="https://github.com/macbuildssys/mime-filter/releases">
-    <img src="https://img.shields.io/badge/Tor%20Browser-Supported-7D4698?logo=torbrowser&logoColor=white" alt="Supported on Tor Browser" />
+    <img src="https://img.shields.io/badge/Tor%20Browser-Available-7D4698?logo=torbrowser&logoColor=white" alt="Available on Tor Browser" />
   </a>
   <img src="https://img.shields.io/badge/Free-forever-2f9e6e" alt="Free forever" />
 </p>
@@ -89,7 +89,7 @@ The **ON/OFF** toggle in the header enables or disables all download filtering. 
 1. Type a MIME type or prefix into the input field and press **Enter** or click **＋**.
 2. Or click a **Quick add** tag for common types.
 
-Rules are **prefix-matched** (case-insensitive), mirroring the `strncasecmp` logic from `SAutotransferMime.cxx`:
+Rules are **prefix-matched** (case-insensitive):
 
 | Rule entered       | Matches |
 |--------------------|---------|

@@ -719,7 +719,7 @@ var MAGIC_SIGNATURES = [
   { bytes: '000001b3',   mime: 'video/mpeg'                                        },
   { bytes: '1a45dfa3',   mime: 'video/webm'                                        },
   { bytes: '504b0304',   mime: 'application/zip'                                   },
-  { bytes: '52617221',   mime: 'application/x-rar-compressed'                      },
+  { bytes: '52617221',   mime: 'application/vnd.rar'                               },
   { bytes: '1f8b',       mime: 'application/gzip'                                  },
   { bytes: '425a68',     mime: 'application/x-bzip2'                               },
   { bytes: '377abcaf27', mime: 'application/x-7z-compressed'                       },
@@ -736,11 +736,52 @@ var MAGIC_SIGNATURES = [
   { bytes: '4d4d002a',   mime: 'image/tiff'                                        },
   { bytes: '424d',       mime: 'image/bmp'                                         },
   { bytes: '00000100',   mime: 'image/x-icon'                                      },
-  { bytes: '3c3f786d6c', mime: 'application/xml'                                   },
-  { bytes: '3c68746d6c', mime: 'text/html'                                         },
-  { bytes: '7b',         mime: 'application/json'                                  },
-  { bytes: '5b',         mime: 'application/json'                                  },
 ];
+
+/* Legacy MIME aliases -> canonical modern equivalent. Mirrors the dedup
+*  performed on the rule-suggestion list (ALL_MIME_TYPES in popup.js): once
+*  a legacy name like "application/x-rar-compressed" was removed from there
+*  in favour of "application/vnd.rar", a rule can only be written using the
+*  canonical name — but real servers still send the legacy name constantly.
+*  Without this map, a download declared with the legacy alias would never
+*  match a rule written against the canonical name, even though they're the
+*  exact same format. Applied to the *declared* type only, before any
+*  comparison against a magic-byte or filename-derived result — those are
+*  already canonical by construction.
+*/
+var MIME_ALIASES = {
+  'application/csv':               'text/csv',
+  'application/javascript':        'text/javascript',
+  'text/rtf':                      'application/rtf',
+  'text/xml':                      'application/xml',
+  'application/x-perl':            'text/x-perl',
+  'application/x-shellscript':     'application/x-sh',
+  'text/x-shellscript':            'application/x-sh',
+  'application/x-tcl':             'text/x-tcl',
+  'application/x-tex':             'text/x-tex',
+  'application/x-texinfo':         'text/x-texinfo',
+  'text/x-vcard':                  'text/vcard',
+  'application/x-winhelp':         'application/winhelp',
+  'application/x-zip-compressed':  'application/zip',
+  'application/zip-compressed':    'application/zip',
+  'application/x-gzip':            'application/gzip',
+  'application/x-pkcs12':          'application/pkcs12',
+  'image/x-pcx':                   'image/pcx',
+  'audio/x-s3m':                   'audio/s3m',
+  'audio/x-mp4a-latm':             'audio/mp4a-latm',
+  'audio/x-adpcm':                 'audio/adpcm',
+  'audio/x-aiff':                  'audio/aiff',
+  'audio/x-mod':                   'audio/mod',
+  'text/inf':                      'application/inf',
+  'application/x-rar':             'application/vnd.rar',
+  'application/x-rar-compressed':  'application/vnd.rar',
+  'image/svg':                     'image/svg+xml',
+};
+
+// Normalizes a declared MIME type through MIME_ALIASES. A no-op for anything not in the map.
+function canonicalizeMime(mimeType) {
+  return MIME_ALIASES[mimeType] || mimeType;
+}
 
 // Extension-to-MIME map used when URL is a blob or internal scheme
 var EXT_MIME_MAP = {
@@ -766,7 +807,7 @@ var EXT_MIME_MAP = {
   'avi':  'video/x-msvideo',
   'mov':  'video/quicktime',
   'zip':  'application/zip',
-  'rar':  'application/x-rar-compressed',
+  'rar':  'application/vnd.rar',
   'gz':   'application/gzip',
   'bz2':  'application/x-bzip2',
   '7z':   'application/x-7z-compressed',
@@ -801,11 +842,48 @@ var EXT_MIME_MAP = {
   'mobi': 'application/x-mobipocket-ebook',
   'iso':  'application/x-iso9660-image',
   'torrent': 'application/x-bittorrent',
+  // Text/data formats with no magic number of their own — added so a
+  // generic-Content-Type download (or a byte-sniffed "plain text" result)
+  // can still be refined to something specific instead of collapsing into
+  // a catch-all bucket.
+  'tsv':        'text/tab-separated-values',
+  'md':         'text/markdown',
+  'markdown':   'text/markdown',
+  'yaml':       'application/yaml',
+  'yml':        'application/yaml',
+  'toml':       'application/toml',
+  'ics':        'text/calendar',
+  'vcf':        'text/vcard',
+  'sql':        'application/sql',
+  'vtt':        'text/vtt',
+  'srt':        'application/x-subrip',
+  'm3u':        'audio/x-mpegurl',
+  'vbs':        'text/vbscript',
+  'mjs':        'text/javascript',
+  'cjs':        'text/javascript',
+  // Scripting/executable-adjacent text formats — these have no magic number
+  // of their own, so without an extension hint they'd previously slip past
+  // any denylist rule targeting them, the same gap that affected CSV.
+  'bash':       'application/x-sh',
+  'bat':        'application/x-bat',
+  'cmd':        'application/x-bat',
+  'ps1':        'application/x-powershell',
+  'rb':         'text/x-ruby',
+  'pl':         'text/x-perl',
+  'php':        'text/x-php',
 };
+
+// Extracts the lowercased file extension from a filename or URL, ignoring
+// any query string/fragment (mirrors Chrome's getExtension()).
+function getExtension(name) {
+  var clean = (name || '').split(/[?#]/)[0];
+  var match = /\.([a-z0-9]+)$/i.exec(clean);
+  return match ? match[1].toLowerCase() : '';
+}
 
 function mimeFromFilename(filename) {
   if (!filename) return null;
-  var ext = filename.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '');
+  var ext = getExtension(filename);
   return EXT_MIME_MAP[ext] || null;
 }
 
@@ -825,7 +903,7 @@ function mimeFromFilename(filename) {
   instead (which is what these force-download links still preserve) and
   filter on THAT. If the filename doesn't map to anything more specific,
   fall back to the original reported type unchanged.
-  */ 
+  */
 var GENERIC_MIME_TYPES = [
   'application/octet-stream',
   'binary/octet-stream',
@@ -833,6 +911,7 @@ var GENERIC_MIME_TYPES = [
   'application/force-download',
   'application/x-download',
   'application/save-as',
+  'text/plain',
 ];
 
 function isGenericMime(mimeType) {
@@ -849,20 +928,92 @@ function resolveEffectiveMime(mimeType, filenameOrUrl) {
   return { mime: mimeType, reportedMime: null };
 }
 
-function detectMimeFromBytes(url, callback) {
-  fetch(url, { headers: { Range: 'bytes=0-31' } })
-    .then(function(r) { return r.arrayBuffer(); })
-    .then(function(buf) {
-      var bytes = new Uint8Array(buf).slice(0, 32);
+/* Pulls a filename out of a Content-Disposition header, if present.
+*  Handles both the plain `filename="x.csv"` form and the RFC 5987
+*  `filename*=UTF-8''x.csv` form that some servers (Google Drive included)
+*  use for names with special characters.
+*/
+function filenameFromContentDisposition(contentDisposition) {
+  if (!contentDisposition) return '';
+  var star = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(contentDisposition);
+  if (star) {
+    try { return decodeURIComponent(star[1].replace(/^"|"$/g, '')); } catch (e) { /* fall through */ }
+  }
+  var plain = /filename="?([^";]+)"?/i.exec(contentDisposition);
+  return plain ? plain[1] : '';
+}
+
+/* Lightweight text sniffing, run only when no binary signature matched.
+*  CSV, plain text, JSON, XML, and HTML have no magic number (they're just
+*  readable characters from byte one), so without this fallback every
+*  text-based download that arrives with no/generic Content-Type would
+*  sail through unidentified. Only looks at a handful of leading bytes, so
+*  on its own it can't tell CSV apart from any other delimited plain text —
+*  that's what filenameHint is for: once content is independently
+*  confirmed as plain text, a ".csv"/".py"/etc. name is enough to safely
+*  refine the label.
+*/
+function detectTextMime(bytes, filenameHint) {
+  if (!bytes || bytes.length === 0) return null;
+
+  var sample = Array.prototype.slice.call(bytes, 0, 32);
+
+  // A null byte pretty much never appears in real text; treat as binary/unknown.
+  if (sample.indexOf(0x00) !== -1) return null;
+
+  var isPrintable = sample.every(function(b) {
+    return (b >= 0x20 && b <= 0x7e) ||          // printable ASCII
+           b === 0x09 || b === 0x0a || b === 0x0d || // tab / LF / CR
+           b >= 0x80;                            // permissive on multi-byte UTF-8 continuation bytes
+  });
+  if (!isPrintable) return null;
+
+  var text = String.fromCharCode.apply(null, sample).replace(/^\s+/, '');
+
+  if (text.indexOf('<?xml') === 0) return 'application/xml';
+  if (/^<!doctype html/i.test(text) || /^<html/i.test(text)) return 'text/html';
+  if (text.charAt(0) === '{' || text.charAt(0) === '[') return 'application/json';
+
+  // Confirmed plain text with no more specific structural match — check the
+  // extension map so a rule on, say, text/csv or application/x-sh actually
+  // catches the file instead of everything collapsing into one bucket.
+  var extMime = mimeFromFilename(filenameHint);
+  if (extMime) return extMime;
+
+  // No recognised extension either — bucket as generic text rather than
+  // silently staying unidentified.
+  return 'text/plain';
+}
+
+function detectMimeFromBytes(url, filenameHint, callback) {
+  fetch(url, {
+    headers: { Range: 'bytes=0-31' },
+    // Critical: without this, the request goes out with no cookies/session
+    // for an authenticated download endpoint (e.g. a signed URL that
+    // requires a logged-in session). Those requests silently come back as
+    // a login/error page instead of the real file bytes, so the sniff
+    // never sees real content and never identifies anything.
+    credentials: 'include',
+    cache: 'no-store',
+  })
+    .then(function(r) {
+      if (!r.ok) return null;
+      var cdFilename = filenameFromContentDisposition(r.headers.get('content-disposition'));
+      var hint = cdFilename || filenameHint || url;
+      return r.arrayBuffer().then(function(buf) { return { buf: buf, hint: hint }; });
+    })
+    .then(function(result) {
+      if (!result) return callback(null);
+      var bytes = new Uint8Array(result.buf).slice(0, 32);
       var hex   = Array.from(bytes).map(function(b) {
         return b.toString(16).padStart(2, '0');
       }).join('');
       for (var i = 0; i < MAGIC_SIGNATURES.length; i++) {
-        if (hex.startsWith(MAGIC_SIGNATURES[i].bytes)) {
+        if (hex.indexOf(MAGIC_SIGNATURES[i].bytes) === 0) {
           return callback(MAGIC_SIGNATURES[i].mime);
         }
       }
-      callback(null);
+      callback(detectTextMime(bytes, result.hint));
     })
     .catch(function() { callback(null); });
 }
@@ -960,13 +1111,14 @@ function handleDownload(item, state, mimeType, pausedFirst, reportedMime) {
   var overrideNote = reportedMime
     ? ' (server reported "' + reportedMime + '"; filename extension used instead)'
     : '';
+  var loadingNote = cachedStateReady ? '' : ' (filter settings were still loading — blocked conservatively; try again if unexpected)';
 
   if (!allowed) {
     chrome.downloads.cancel(item.id);
     setTimeout(function() { chrome.downloads.erase({ id: item.id }); }, 500);
     var reason = (mode === 'allowlist'
       ? 'MIME type "' + mimeType + '" is not in the allowlist'
-      : 'MIME type "' + mimeType + '" is in the denylist') + overrideNote;
+      : 'MIME type "' + mimeType + '" is in the denylist') + overrideNote + loadingNote;
     appendLog(buildEntry(item, 'blocked', reason, mimeType));
     if (notifyOn) notify('Download Blocked', mimeType + '\n' + shortUrl(item.url));
     console.info('[MIME Filter] BLOCKED:', mimeType, item.url);
@@ -994,7 +1146,7 @@ function handleDownload(item, state, mimeType, pausedFirst, reportedMime) {
 
 var STATE_KEYS = ['enabled', 'mode', 'allowlistRules', 'denylistRules', 'notifyOn', 'unknownBlock'];
 
-  /* 
+  /*
   In-memory settings cache.
 
   The webRequest blocking listener below MUST decide synchronously.
@@ -1015,9 +1167,42 @@ var STATE_KEYS = ['enabled', 'mode', 'allowlistRules', 'denylistRules', 'notifyO
   current via chrome.storage.onChanged, so the listener can read it and
   return {cancel:true} in the same tick the headers arrive — no timeout
   window to lose the race against, on any Firefox-based browser.
-  */ 
+  */
+/* These match getDefaults() exactly. Before this fix, the window between
+*  browser/extension startup and the async chrome.storage.local.get()
+*  callback below resolving left `enabled: false` and empty rule arrays —
+*  meaning any download that happened to land in that window (e.g. testing
+*  a download right after reloading the extension) passed through
+*  completely silently: no block, no log entry, no notification, since
+*  both onHeadersReceivedHandler and the onCreated listener bail out
+*  immediately on `!cachedState.enabled` before any logging code runs.
+*  Seeding the same defaults the real settings will resolve to (for anyone
+*  who hasn't changed them) closes that gap.
+*/
+/* These are deliberately NOT "sensible defaults" — they're a fail-closed
+*  placeholder. Firefox's non-persistent background script can be torn down
+*  and respawned mid-session (not just at browser startup), and every
+*  respawn re-runs this whole file from scratch, resetting cachedState
+*  until the async chrome.storage.local.get() below resolves with the
+*  user's real settings.
+*
+*  An earlier version of this defaulted to enabled:true with the full
+*  default allow-list "for safety" — but that meant any download landing
+*  in that window was evaluated under a policy the user never chose (e.g.
+*  a user running in denylist mode would have that respawn window silently
+*  fall back to allowlist mode with default rules, incorrectly allowing
+*  through anything in that default list). That produced exactly this bug:
+*  the same file, tested seconds apart, getting opposite verdicts with no
+*  configuration change in between.
+*
+*  mode:'allowlist' + allowlistRules:[] blocks everything until real
+*  settings load — the safe direction to fail in for a download filter —
+*  and cachedStateReady lets the blocked-reason say so explicitly instead
+*  of looking like an ordinary rule match.
+*/
+var cachedStateReady = false;
 var cachedState = {
-  enabled:        false,
+  enabled:        true,
   mode:           'allowlist',
   allowlistRules: [],
   denylistRules:  [],
@@ -1033,6 +1218,7 @@ function refreshCachedState(callback) {
     cachedState.denylistRules  = data.denylistRules  || [];
     cachedState.notifyOn       = data.notifyOn     !== false;
     cachedState.unknownBlock   = data.unknownBlock !== false;
+    cachedStateReady = true;
     if (callback) callback();
   });
 }
@@ -1095,7 +1281,7 @@ function onHeadersReceivedHandler(details) {
   var ctHeader = headers.find(function(h) { return h.name.toLowerCase() === 'content-type'; });
   if (!ctHeader || !ctHeader.value) return {}; // nothing to judge yet — onCreated + magic-byte fallback covers this
 
-  var mimeType = ctHeader.value.split(';')[0].trim().toLowerCase();
+  var mimeType = canonicalizeMime(ctHeader.value.split(';')[0].trim().toLowerCase());
   var filenameGuess = extractFilenameFromHeaders(headers, details.url);
   var resolved  = resolveEffectiveMime(mimeType, filenameGuess || details.url);
   var mode      = cachedState.mode;
@@ -1109,9 +1295,10 @@ function onHeadersReceivedHandler(details) {
   var overrideNote = resolved.reportedMime
     ? ' (server reported "' + resolved.reportedMime + '"; filename extension used instead)'
     : '';
+  var loadingNote = cachedStateReady ? '' : ' (filter settings were still loading — blocked conservatively; try again if unexpected)';
   var reason = (mode === 'allowlist'
     ? 'MIME type "' + resolved.mime + '" is not in the allowlist'
-    : 'MIME type "' + resolved.mime + '" is in the denylist') + overrideNote;
+    : 'MIME type "' + resolved.mime + '" is in the denylist') + overrideNote + loadingNote;
 
   // Logging/notifying are fire-and-forget and happen AFTER the decision to cancel is already made — they never delay the return below.
   appendLog(buildEntry(pseudoItem, 'blocked', reason, resolved.mime));
@@ -1131,8 +1318,8 @@ chrome.webRequest.onHeadersReceived.addListener(
   FALLBACK PATH: chrome.downloads.onCreated.
   blob:/data: downloads never touch the network, so webRequest above can
   never see them — this listener is the only place that can catch those.
-  It also acts as defense-in-depth for any http/https download that 
-  somehow reaches this point despite the pre-flight check (e.g. no Content-Type header at all, 
+  It also acts as defense-in-depth for any http/https download that
+  somehow reaches this point despite the pre-flight check (e.g. no Content-Type header at all,
   requiring magic-byte sniffing).
   This now reads cachedState directly (synchronous, no storage round
   trip needed at all), and additionally pauses the item as the very
@@ -1147,7 +1334,7 @@ chrome.downloads.onCreated.addListener(function(item) {
   if (isHardInternalUrl(url)) return;
   if (!cachedState.enabled) return; // never touched, nothing to pause/resume
 
-  var mimeType = item.mime || '';
+  var mimeType = canonicalizeMime(item.mime || '');
 
   // For blob URLs and non-http URLs, try to derive MIME from filename first
   var isBlobOrInternal = url.startsWith('blob:') || (!url.startsWith('http://') && !url.startsWith('https://'));
@@ -1173,10 +1360,10 @@ chrome.downloads.onCreated.addListener(function(item) {
      trip (magic-byte sniffing), so THIS is the one case that still needs
      to pause first, to avoid a fast download completing before the sniff
      resolves*/
-  
+
   if (url.startsWith('http://') || url.startsWith('https://')) {
     chrome.downloads.pause(item.id, function() { void chrome.runtime.lastError; });
-    detectMimeFromBytes(url, function(detected) {
+    detectMimeFromBytes(url, filename, function(detected) {
       if (detected) {
         handleDownload(item, cachedState, detected, /* pausedFirst */ true);
       } else if (cachedState.unknownBlock) {
