@@ -1365,6 +1365,18 @@ chrome.downloads.onCreated.addListener(function(item) {
   if (url.startsWith('http://') || url.startsWith('https://')) {
     chrome.downloads.pause(item.id, function() { void chrome.runtime.lastError; });
     detectMimeFromBytes(url, filename, function(detected) {
+      if (!cachedState.enabled) {
+        // Extension was switched off while this async sniff (fetch over the
+        // network) was in flight. The enabled check at the top of this
+        // listener only covers the moment the download was created — it's
+        // stale by now. Re-check here, right before acting, and if the
+        // toggle is off just let the paused download go through untouched:
+        // no cancel, no log entry, no notification. Without this, toggling
+        // OFF mid-sniff would not stop a block/notify that was already
+        // "decided" back when the extension was still on.
+        chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
+        return;
+      }
       if (detected) {
         handleDownload(item, cachedState, detected, /* pausedFirst */ true);
       } else if (cachedState.unknownBlock) {
@@ -1423,6 +1435,12 @@ chrome.downloads.onChanged.addListener(function(delta) {
   if (!cachedState.enabled) return; // extension OFF — do nothing, not even a sniff; must come before any fetch/sniff work below
 
   chrome.downloads.search({ id: delta.id }, function(results) {
+    // Re-check: the entry-point check above only proves the toggle was on
+    // the instant the download completed. chrome.downloads.search() is
+    // itself an async round trip to the browser, however brief — cheap
+    // insurance against acting on a now-stale "enabled" reading.
+    if (!cachedState.enabled) return;
+
     var item = results && results[0];
     if (!item) return;
 
@@ -1439,6 +1457,12 @@ chrome.downloads.onChanged.addListener(function(delta) {
     if (!declared || isGenericMime(declared)) return;
 
     detectMimeFromBytes(url, item.filename, function(detected) {
+      // Re-check again: this is the point most likely to actually matter —
+      // the sniff is a real network fetch and can take long enough for the
+      // toggle to flip mid-flight. Without this, a file whose download
+      // completed while the extension was on could still get deleted (and
+      // notified) seconds later after the person switched it off.
+      if (!cachedState.enabled) return;
       if (!detected) return; // inconclusive sniff — absence of a magic-byte/text match is not evidence of spoofing, don't act on it
       var detectedNorm = detected.toLowerCase();
       if (detectedNorm === declared) return; // bytes match what was declared — no spoof
