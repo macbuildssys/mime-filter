@@ -595,6 +595,7 @@ const ALL_MIME_TYPES = [
   'application/x-ntbackup',
   'application/x-object',
   'application/x-ole-storage',
+  'application/x-openvpn-profile',
   'application/x-panasonic-sqlite3',
   'application/x-panorama-database',
   'application/x-pem-file',
