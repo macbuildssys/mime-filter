@@ -857,6 +857,7 @@ var EXT_MIME_MAP = {
   'sql':        'application/sql',
   'vtt':        'text/vtt',
   'srt':        'application/x-subrip',
+  'ovpn':       'application/x-openvpn-profile',
   'm3u':        'audio/x-mpegurl',
   'vbs':        'text/vbscript',
   'mjs':        'text/javascript',
@@ -1385,6 +1386,73 @@ chrome.downloads.onCreated.addListener(function(item) {
   } else {
     appendLog(buildEntry(item, 'allowed', 'No MIME type detected (unknown-block OFF)', 'unknown'));
   }
+});
+
+/*
+  SPOOF-CHECK PATH: chrome.downloads.onChanged.
+
+  Neither of the two listeners above ever byte-verifies a declared type
+  that's specific-but-false. onHeadersReceivedHandler only resolves GENERIC
+  wrapper types (application/octet-stream etc.) via resolveEffectiveMime —
+  it trusts anything more specific (e.g. "image/png") at face value, since
+  it must return synchronously and can't await a network round trip mid-
+  response. onCreated's magic-byte path (detectMimeFromBytes) only runs
+  when there's NO declared type at all. So a server that declares
+  "Content-Type: image/png" on a response body that's actually a Windows
+  PE or a shell script sails straight through both — the textbook
+  malware-delivery trick of disguising an executable behind an innocuous
+  declared type. This listener closes that gap as a final, post-download
+  check: once the file has actually finished writing, re-fetch its first
+  bytes over the network (same technique detectMimeFromBytes already uses
+  elsewhere) and compare the sniffed result against what was declared. A
+  contradiction means the declared type was spoofed, so the saved file is
+  deleted rather than left on disk having evaded every earlier check.
+
+  This runs independently of onCreated/onHeadersReceived and of allow/deny
+  rules — it's not a policy match, it's an integrity check ("did the
+  bytes match what the server told us they were") — so it must carry its
+  own `cachedState.enabled` gate rather than relying on either of the
+  other listeners having already screened the download. Per the toggle
+  bug: this gate MUST be the first thing checked after confirming the
+  download just completed, before any fetch/sniff work happens, exactly
+  like the other two listeners — otherwise switching the extension OFF
+  would not stop files from being deleted after the fact.
+*/
+chrome.downloads.onChanged.addListener(function(delta) {
+  if (!delta.state || delta.state.current !== 'complete') return; // only act once the file has actually finished writing
+  if (!cachedState.enabled) return; // extension OFF — do nothing, not even a sniff; must come before any fetch/sniff work below
+
+  chrome.downloads.search({ id: delta.id }, function(results) {
+    var item = results && results[0];
+    if (!item) return;
+
+    var url = item.url || '';
+    if (isHardInternalUrl(url)) return;
+    // blob:/data: downloads have no network-fetchable source to re-sniff from at this point — only http/https can be re-verified this way.
+    if (!(url.startsWith('http://') || url.startsWith('https://'))) return;
+
+    var declared = canonicalizeMime((item.mime || '').split(';')[0].trim().toLowerCase());
+    // Nothing "specific but false" to check for an empty or generic declared
+    // type — those are already resolved from the filename by
+    // resolveEffectiveMime() elsewhere, and re-flagging them here would
+    // just produce false positives on the very fallback path meant to fix them.
+    if (!declared || isGenericMime(declared)) return;
+
+    detectMimeFromBytes(url, item.filename, function(detected) {
+      if (!detected) return; // inconclusive sniff — absence of a magic-byte/text match is not evidence of spoofing, don't act on it
+      var detectedNorm = detected.toLowerCase();
+      if (detectedNorm === declared) return; // bytes match what was declared — no spoof
+
+      chrome.downloads.removeFile(item.id, function() {
+        void chrome.runtime.lastError;
+        var reason = 'Declared MIME type "' + declared + '" contradicted by sniffed content ("' + detected +
+          '") — possible spoofing; file deleted after download completed';
+        appendLog(buildEntry(item, 'blocked', reason, detected));
+        if (cachedState.notifyOn) notify('Spoofed Download Deleted', declared + ' \u2192 ' + detected + '\n' + shortUrl(url));
+        console.info('[MIME Filter] SPOOF DETECTED, file deleted:', declared, '->', detected, url);
+      });
+    });
+  });
 });
 
 function clearAllNotifications() {
