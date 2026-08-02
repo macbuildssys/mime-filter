@@ -10,7 +10,8 @@
     "storage",
     "notifications",
     "webRequest",
-    "webRequestBlocking"
+    "webRequestBlocking",
+    "alarms"
   ],
 
   "host_permissions": [

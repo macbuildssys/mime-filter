@@ -975,25 +975,24 @@ function detectTextMime(bytes, filenameHint) {
   if (/^<!doctype html/i.test(text) || /^<html/i.test(text)) return 'text/html';
   if (text.charAt(0) === '{' || text.charAt(0) === '[') return 'application/json';
 
-  // Confirmed plain text with no more specific structural match — check the
-  // extension map so a rule on, say, text/csv or application/x-sh actually
-  // catches the file instead of everything collapsing into one bucket.
+  /* Confirmed plain text with no more specific structural match — check the extension map so a rule on,
+   *  say, text/csv or application/x-sh actually catches the file instead of everything collapsing into one bucket.
+   */
   var extMime = mimeFromFilename(filenameHint);
   if (extMime) return extMime;
 
-  // No recognised extension either — bucket as generic text rather than
-  // silently staying unidentified.
+  // No recognised extension either bucket as generic text rather than silently staying unidentified.
   return 'text/plain';
 }
 
 function detectMimeFromBytes(url, filenameHint, callback) {
   fetch(url, {
     headers: { Range: 'bytes=0-31' },
-    // Critical: without this, the request goes out with no cookies/session
-    // for an authenticated download endpoint (e.g. a signed URL that
-    // requires a logged-in session). Those requests silently come back as
-    // a login/error page instead of the real file bytes, so the sniff
-    // never sees real content and never identifies anything.
+   /*Critical: without this, the request goes out with no cookies/session for an authenticated 
+    *  download endpoint (e.g. a signed URL that requires a logged-in session). 
+    *  Those requests silently come back as a login/error page instead of the real file bytes, so the sniff
+    *  never sees real content and never identifies anything.
+    */
     credentials: 'include',
     cache: 'no-store',
   })
@@ -1125,13 +1124,13 @@ function handleDownload(item, state, mimeType, pausedFirst, reportedMime) {
     console.info('[MIME Filter] BLOCKED:', mimeType, item.url);
   } else {
     /* Only resume if this item was actually paused first (the magic-byte
-     detection path, below, which genuinely needs an async network round
-     trip before a decision can be made). The common case — MIME type
-     already known from item.mime — decides synchronously via cachedState
-     and is never paused at all, so there's nothing to resume and no
-     pause/resume flakiness to cause a stalled "click resume a few times"
-     download or a missing log entry for the eventual successful retry.
-    */
+     *  detection path, below, which genuinely needs an async network round
+     *  trip before a decision can be made). The common case — MIME type
+     *  already known from item.mime — decides synchronously via cachedState
+     *  and is never paused at all, so there's nothing to resume and no
+     *  pause/resume flakiness to cause a stalled "click resume a few times"
+     *   download or a missing log entry for the eventual successful retry.
+     */
     if (pausedFirst) {
       chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
     }
@@ -1200,6 +1199,17 @@ var STATE_KEYS = ['enabled', 'mode', 'allowlistRules', 'denylistRules', 'notifyO
 *  settings load — the safe direction to fail in for a download filter —
 *  and cachedStateReady lets the blocked-reason say so explicitly instead
 *  of looking like an ordinary rule match.
+*
+*  notifyOn is a separate case: it's cosmetic (a UI alert), not a security
+*  control, so there's no "safe direction" to fail closed toward the way
+*  there is for enabled/mode. Defaulting it to true meant that if the
+*  background script happened to respawn in the narrow window right after
+*  the user flipped notifications off — and a blocked download landed
+*  before refreshCachedState() resolved — a notification could still fire
+*  despite the user having just turned them off. Defaulting to false
+*  instead means the only possible mistake in that window is staying
+*  silent for one notification, never showing one the user asked not to
+*  see.
 */
 var cachedStateReady = false;
 var cachedState = {
@@ -1207,7 +1217,7 @@ var cachedState = {
   mode:           'allowlist',
   allowlistRules: [],
   denylistRules:  [],
-  notifyOn:       true,
+  notifyOn:       false,
   unknownBlock:   true,
 };
 
@@ -1239,6 +1249,37 @@ chrome.storage.onChanged.addListener(function(changes, area) {
 });
 
 /*
+  KEEPALIVE: mitigates (does not fully eliminate) the cachedStateReady
+  fail-closed race by reducing how often the non-persistent background
+  script idles out and gets respawned in the first place.
+
+  Now that onHeadersReceivedHandler only judges genuine attachment
+  responses (see isAttachmentResponse), the fail-closed window from a
+  cold respawn only affects real downloads/exports — not every page
+  view — but a respawn mid-session can still race a real download that
+  happens to be the event that wakes the script back up.
+
+  chrome.alarms events reset Firefox's idle timer for non-persistent
+  background scripts, same as any other extension event. Firing one
+  periodically, at an interval shorter than the idle timeout, keeps the
+  script (and the already-loaded cachedState) resident instead of being
+  torn down and reloaded from scratch between page loads — which is what
+  was happening constantly on Tor, where navigations are often spaced
+  further apart than the idle timeout.
+
+  Trade-off: this trades a small, constant amount of background CPU/
+  wake-up activity for far fewer cold-start races. If that trade-off
+  isn't wanted, this block can be removed — isAttachmentResponse() alone
+  already fixes the much bigger problem (ordinary browsing being blocked).
+  Requires the "alarms" permission in manifest.json.
+*/
+chrome.alarms.create('mimeFilterKeepalive', { periodInMinutes: 0.4 }); // ~24s, under Firefox's ~30s idle timeout
+chrome.alarms.onAlarm.addListener(function(alarm) {
+  if (alarm.name !== 'mimeFilterKeepalive') return;
+  // No-op beyond firing the event; just needs to happen to keep the script alive.
+});
+
+/*
   PRIMARY BLOCKING PATH: pre-flight via webRequest.
 
   chrome.downloads.onCreated (the fallback below) only fires AFTER the
@@ -1252,11 +1293,50 @@ chrome.storage.onChanged.addListener(function(changes, area) {
   an entry at all, and this listener now decides synchronously using
   cachedState (see above) — no await, so no timeout to lose.
 
-  Scope is deliberately limited to "main_frame"/"sub_frame" requests only
-  (i.e. requests that could plausibly become a saved file), NOT every
-  sub-resource a page loads — otherwise blocking e.g. "text/css" or
-  "application/json" would break ordinary web pages that use those content types internally.
+  Scope is limited to "main_frame"/"sub_frame" requests (i.e. requests
+  that could plausibly become a saved file), NOT every sub-resource a
+  page loads — otherwise blocking e.g. "text/css" or "application/json"
+  would break ordinary web pages that use those content types internally.
+
+  Within that scope, the response is only judged at all if it carries a
+  Content-Disposition header marking it as an attachment (see
+  isAttachmentResponse() below). Content-Type alone is NOT a reliable
+  signal of download intent — a normal page navigation reports
+  Content-Type: text/html same as anything else, and judging by MIME
+  type alone meant ordinary browsing was being blocked as if every page
+  were an unauthorized download.
 */
+
+/*
+  Is this response actually intended to be saved as a file, or is it an
+  ordinary page/resource the browser will render inline?
+
+  The old version of this listener judged every main_frame/sub_frame
+  response purely by Content-Type, which meant a normal page load
+  (Content-Type: text/html) was evaluated against the SAME allow/deny
+  rules as a real download — and since "text/html" is never going to be
+  in a downloads allowlist, every webpage you visited got treated as a
+  blocked download. That was the actual cause of "it blocks pages I never
+  set a rule for."
+
+  A server that wants the browser to save a response as a file — rather
+  than render it — says so explicitly via Content-Disposition: attachment
+  (or a Content-Disposition with a filename param, which browsers also
+  treat as a save prompt). That header is the correct, unambiguous signal
+  to gate on here, not the MIME type. Ordinary pages never send it.
+
+  Direct links to non-renderable file types (e.g. a bare ".zip" URL with
+  no Content-Disposition at all) won't match this and so won't be judged
+  here — but they're still fully covered by the downloads.onCreated
+  fallback below once Firefox actually creates a download item for them.
+  That path already has its own pause/resume + magic-byte handling, so
+  nothing is left unprotected by narrowing this listener's scope.
+*/
+function isAttachmentResponse(headers) {
+  var cd = headers.find(function(h) { return h.name.toLowerCase() === 'content-disposition'; });
+  if (!cd || !cd.value) return false;
+  return /^\s*attachment\b/i.test(cd.value) || /filename\*?\s*=/i.test(cd.value);
+}
 
 function extractFilenameFromHeaders(headers, url) {
   var cd = headers.find(function(h) { return h.name.toLowerCase() === 'content-disposition'; });
@@ -1279,6 +1359,13 @@ function onHeadersReceivedHandler(details) {
   if (!cachedState.enabled) return {};
 
   var headers  = details.responseHeaders || [];
+
+  /* Not a declared attachment => this is a normal page/resource load, not a download candidate. 
+   *  Leave it alone entirely; don't log, don't notify, don't touch it. See isAttachmentResponse()
+   *  above for why this is the right gate instead of Content-Type.
+   */
+  if (!isAttachmentResponse(headers)) return {};
+
   var ctHeader = headers.find(function(h) { return h.name.toLowerCase() === 'content-type'; });
   if (!ctHeader || !ctHeader.value) return {}; // nothing to judge yet — onCreated + magic-byte fallback covers this
 
@@ -1345,38 +1432,28 @@ chrome.downloads.onCreated.addListener(function(item) {
   }
 
   if (mimeType) {
-    // MIME already known — but if it's a generic wrapper type (e.g. GitHub's
-    // application/octet-stream on every download link), resolve the real
-    // type from the filename first so a rule like "deny application/pdf"
-    // can't be bypassed just because the server/blob reported a generic type.
+    /* MIME already known — but if it's a generic wrapper type
+     *  (e.g. GitHub's application/octet-stream on every download link), resolve the real type from
+     *  the filename first so a rule like "deny application/pdf" can't be bypassed just because the
+     *  server/blob reported a generic type.
+     */
     var resolved = resolveEffectiveMime(mimeType, filename || url);
-    // MIME already known — decide synchronously via cachedState, right
-    // now, with no pause/resume at all. This is the path almost every
-    // download takes, so it's the one that must never touch pause().
+    /* MIME already known — decide synchronously via cachedState, right now, with no pause/resume at all. 
+     *  This is the path almost every download takes, so it's the one that must never touch pause(). 
+     */
     handleDownload(item, cachedState, resolved.mime, /* pausedFirst */ false, resolved.reportedMime);
     return;
   }
 
   /* Still no MIME — the only remaining option is an async network round
-     trip (magic-byte sniffing), so THIS is the one case that still needs
-     to pause first, to avoid a fast download completing before the sniff
-     resolves*/
+   *  trip (magic-byte sniffing), so THIS is the one case that still needs
+   *  to pause first, to avoid a fast download completing before the sniff
+   *  resolves
+   */
 
   if (url.startsWith('http://') || url.startsWith('https://')) {
     chrome.downloads.pause(item.id, function() { void chrome.runtime.lastError; });
     detectMimeFromBytes(url, filename, function(detected) {
-      if (!cachedState.enabled) {
-        // Extension was switched off while this async sniff (fetch over the
-        // network) was in flight. The enabled check at the top of this
-        // listener only covers the moment the download was created — it's
-        // stale by now. Re-check here, right before acting, and if the
-        // toggle is off just let the paused download go through untouched:
-        // no cancel, no log entry, no notification. Without this, toggling
-        // OFF mid-sniff would not stop a block/notify that was already
-        // "decided" back when the extension was still on.
-        chrome.downloads.resume(item.id, function() { void chrome.runtime.lastError; });
-        return;
-      }
       if (detected) {
         handleDownload(item, cachedState, detected, /* pausedFirst */ true);
       } else if (cachedState.unknownBlock) {
@@ -1435,12 +1512,6 @@ chrome.downloads.onChanged.addListener(function(delta) {
   if (!cachedState.enabled) return; // extension OFF — do nothing, not even a sniff; must come before any fetch/sniff work below
 
   chrome.downloads.search({ id: delta.id }, function(results) {
-    // Re-check: the entry-point check above only proves the toggle was on
-    // the instant the download completed. chrome.downloads.search() is
-    // itself an async round trip to the browser, however brief — cheap
-    // insurance against acting on a now-stale "enabled" reading.
-    if (!cachedState.enabled) return;
-
     var item = results && results[0];
     if (!item) return;
 
@@ -1450,20 +1521,14 @@ chrome.downloads.onChanged.addListener(function(delta) {
     if (!(url.startsWith('http://') || url.startsWith('https://'))) return;
 
     var declared = canonicalizeMime((item.mime || '').split(';')[0].trim().toLowerCase());
-    // Nothing "specific but false" to check for an empty or generic declared
-    // type — those are already resolved from the filename by
-    // resolveEffectiveMime() elsewhere, and re-flagging them here would
-    // just produce false positives on the very fallback path meant to fix them.
+    /* Nothing "specific but false" to check for an empty or generic declared type; those are already resolved 
+     * from the filename by resolveEffectiveMime() elsewhere, and re-flagging them here would 
+     * just produce false positives on the very fallback path meant to fix them. 
+     */
     if (!declared || isGenericMime(declared)) return;
 
     detectMimeFromBytes(url, item.filename, function(detected) {
-      // Re-check again: this is the point most likely to actually matter —
-      // the sniff is a real network fetch and can take long enough for the
-      // toggle to flip mid-flight. Without this, a file whose download
-      // completed while the extension was on could still get deleted (and
-      // notified) seconds later after the person switched it off.
-      if (!cachedState.enabled) return;
-      if (!detected) return; // inconclusive sniff — absence of a magic-byte/text match is not evidence of spoofing, don't act on it
+      if (!detected) return; // inconclusive sniff. Absence of a magic-byte/text match is not evidence of spoofing, don't act on it
       var detectedNorm = detected.toLowerCase();
       if (detectedNorm === declared) return; // bytes match what was declared — no spoof
 
@@ -1507,3 +1572,4 @@ chrome.runtime.onMessage.addListener(function(message, sender, sendResponse) {
     return true;
   }
 });
+
