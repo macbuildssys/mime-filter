@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MIME Filter",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Intercept and filter browser downloads by MIME type. Allow or block file types with logging and notifications.",
   "author": "macbuildssys",
 
