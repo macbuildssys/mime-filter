@@ -241,7 +241,19 @@ html, body { width: var(--popup-w); height: 370px; overflow: hidden; background:
 }
 @keyframes slideIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
 
+/* FIX: was implicitly `display: inline` (a bare <span>). max-width/overflow/
+   text-overflow only ever took effect here because .rule-item is a flex
+   container, which blockifies inline-level flex items. That's an accidental
+   dependency on this element's *parent* rather than a property of the
+   element itself, so the exact same span silently ignored its own truncation
+   rules when reused inside .log-mime (a plain, non-flex <div>) in the Log
+   tab. Making it inline-block directly gives it its own block-level box in
+   both contexts: inside .rule-item it's blockified to `block` anyway (no
+   visual change), and inside .log-mime it now genuinely respects
+   max-width/overflow/text-overflow instead of running past the edge. */
 .rule-item-mime {
+  display: inline-block;
+  vertical-align: top;
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--text-mono);
@@ -563,3 +575,4 @@ html, body { width: var(--popup-w); height: 370px; overflow: hidden; background:
 /*  Rules panel  */
 
 #panel-rules { max-height: 520px; overflow-y: auto; }
+
