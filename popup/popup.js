@@ -5,17 +5,56 @@
 
 'use strict';
 
+// Which document types Docs only always allows. Kept as a plain constant here (not fetched from background.js) so the Rules-tab lock never depends on a round trip to a background script that Firefox can suspend between page loads — it must be correct the instant the popup opens. MUST be kept identical to DOCS_ONLY_TYPES in background.js, the one place that actually decides.
+const DOCS_ONLY_TYPES = [
+  'application/pdf',
+  'application/rtf',
+  'text/markdown',
+  'application/xml',
+  'text/csv',
+  'text/tab-separated-values',
+  'application/epub+zip',
+  'application/x-mobipocket-ebook',
+  'application/msword',
+  'application/vnd.ms-word',
+  'application/vnd.ms-excel',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.',
+  'application/onenote',
+  'application/vnd.ms-visio',
+  'application/vnd.visio',
+  'application/vnd.ms-project',
+  'application/x-mspublisher',
+  'application/vnd.ms-works',
+  'application/vnd.ms-xpsdocument',
+  'application/oxps',
+  'application/vnd.oasis.opendocument.',
+  'application/x-vnd.oasis.opendocument.',
+  'application/vnd.sun.xml.',
+  'application/vnd.stardivision.',
+  'application/vnd.apple.pages',
+  'application/vnd.apple.numbers',
+  'application/vnd.apple.keynote',
+  'application/x-iwork-',
+];
+
 // State
 const state = {
-  enabled:         true,
-  mode:            'allowlist',
-  allowlistRules:  [],
-  denylistRules:   [],
-  log:             [],
-  maxLog:          500,
-  unknownBlock:    true,
-  notifyOn:        true,
-  activeTab:       'rules',
+  enabled:          true,
+  mode:             'allowlist',
+  allowlistRules:   [],
+  denylistRules:    [],
+  log:              [],
+  maxLog:           500,
+  unknownBlock:     true,
+  notifyOn:         true,
+  clearLogOnClose:  false,
+  siteRules:        [],
+  mismatchMode:     'warn',
+  docsOnly:         false,
+  docsOnlySnapshot: null,
+  logFilter:        'all',
+  activeTab:        'rules',
 };
 
 // Returns the active rule array for the current mode
@@ -958,6 +997,11 @@ async function loadState() {
       if (data.maxLogSize      !== undefined) state.maxLog          = data.maxLogSize;
       if (data.unknownBlock    !== undefined) state.unknownBlock    = data.unknownBlock;
       if (data.notifyOn        !== undefined) state.notifyOn        = data.notifyOn;
+      if (data.clearLogOnClose !== undefined) state.clearLogOnClose = data.clearLogOnClose;
+      if (data.siteRules       !== undefined) state.siteRules       = data.siteRules;
+      if (data.mismatchMode    !== undefined) state.mismatchMode    = data.mismatchMode;
+      if (data.docsOnly        !== undefined) state.docsOnly        = data.docsOnly;
+      if (data.docsOnlySnapshot !== undefined) state.docsOnlySnapshot = data.docsOnlySnapshot;
       resolve();
     });
   });
@@ -972,6 +1016,11 @@ async function persist(partial) {
     maxLog:         'maxLogSize',
     unknownBlock:   'unknownBlock',
     notifyOn:       'notifyOn',
+    clearLogOnClose: 'clearLogOnClose',
+    siteRules:      'siteRules',
+    mismatchMode:   'mismatchMode',
+    docsOnly:       'docsOnly',
+    docsOnlySnapshot: 'docsOnlySnapshot',
   };
   const payload = {};
   for (const [k, v] of Object.entries(partial)) {
@@ -979,6 +1028,57 @@ async function persist(partial) {
     if (k in MAP) payload[MAP[k]] = v;
   }
   return new Promise(resolve => chrome.storage.local.set(payload, resolve));
+}
+
+// With Docs only on, the individual document types are locked in both lists: they cannot be added or removed there.
+function isLockedDoc(mime) {
+  if (!state.docsOnly) return false;
+  const m = String(mime || '').trim().toLowerCase();
+  return DOCS_ONLY_TYPES.some(d => m.startsWith(d));
+}
+
+// Website rules — kept in step with normalizeHost/isValidHost in background.js.
+function normalizeHost(input) {
+  let host = String(input || '').trim().toLowerCase();
+  host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  host = host.replace(/^\*\./, '');
+  host = host.replace(/^www\./, '');
+  host = host.split(/[/?#]/)[0];
+  host = host.replace(/:\d+$/, '');
+  host = host.replace(/\.$/, '');
+  return host;
+}
+
+function isValidHost(host) {
+  return /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(host);
+}
+
+// Turns "application/pdf, image/" into a clean list. Every entry needs a slash.
+function parseTypeList(raw) {
+  return [...new Set(String(raw || '')
+    .split(/[\s,;]+/)
+    .map(t => t.trim().toLowerCase())
+    .filter(t => t.includes('/')))];
+}
+
+// Log filter and CSV export
+function filteredLog() {
+  if (state.logFilter === 'all') return state.log;
+  return state.log.filter(entry => entry.status === state.logFilter);
+}
+
+// A cell that starts with = + - or @ would run as a formula when opened in a spreadsheet, so it gets a leading apostrophe.
+function csvCell(value) {
+  let text = String(value == null ? '' : value);
+  if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+  return '"' + text.replace(/"/g, '""') + '"';
+}
+
+function logToCsv(entries) {
+  const columns = ['timestamp', 'status', 'mimeType', 'siteRule', 'siteHost', 'filename', 'url', 'reason', 'id'];
+  const rows = [columns.join(',')];
+  entries.forEach(entry => rows.push(columns.map(col => csvCell(entry[col])).join(',')));
+  return '\uFEFF' + rows.join('\r\n');
 }
 
 // DOM helpers
@@ -1085,33 +1185,109 @@ function renderRuleList() {
     const li  = document.createElement('li');
     li.className = 'rule-item';
 
-    const btn = document.createElement('button');
-    btn.className    = 'rule-delete';
-    btn.dataset.idx  = idx;
-    btn.title        = 'Remove rule';
-    btn.textContent  = '✕';
-
     li.appendChild(buildMimeSpan(mime));
+    if (isLockedDoc(mime)) {
+      // A document type while Docs only is on: shown, but not removable.
+      const lock = document.createElement('span');
+      lock.className   = 'rule-lock';
+      lock.textContent = 'locked';
+      lock.title       = 'Document types are locked while Docs only is on';
+      li.appendChild(lock);
+    } else {
+      const btn = document.createElement('button');
+      btn.className    = 'rule-delete';
+      btn.dataset.idx  = idx;
+      btn.title        = 'Remove rule';
+      btn.textContent  = '✕';
+      li.appendChild(btn);
+    }
+    ul.appendChild(li);
+  });
+}
+
+const SITE_ACTION_LABELS = { allow: 'Trust', block: 'Block', only: 'Only' };
+const SITE_ACTION_HINTS  = {
+  allow: 'Trust: any file type is allowed from this website.',
+  block: 'Block: every download from this website is blocked.',
+  only:  'Only types: just the listed types are allowed from this website.',
+};
+
+function renderSites() {
+  const ul = el('site-list');
+  ul.replaceChildren();
+
+  if (state.siteRules.length === 0) {
+    const li = document.createElement('li');
+    li.style.cssText = 'padding:8px;text-align:center;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)';
+    li.textContent = 'No websites added yet.';
+    ul.appendChild(li);
+    return;
+  }
+
+  state.siteRules.forEach((rule, idx) => {
+    const li = document.createElement('li');
+    li.className = 'rule-item site-item';
+
+    const left = document.createElement('span');
+    left.className = 'site-left';
+
+    const host = document.createElement('span');
+    host.className   = 'site-host';
+    host.textContent = rule.host;
+
+    const badge = document.createElement('span');
+    badge.className   = `site-badge ${rule.action}`;
+    badge.textContent = SITE_ACTION_LABELS[rule.action] || rule.action;
+    if (rule.action === 'only') badge.title = (rule.types || []).join(', ');
+
+    left.appendChild(host);
+    left.appendChild(badge);
+
+    if (rule.action === 'only') {
+      const types = document.createElement('span');
+      types.className   = 'site-types';
+      types.textContent = (rule.types || []).join(', ');
+      types.title       = types.textContent;
+      left.appendChild(types);
+    }
+
+    const btn = document.createElement('button');
+    btn.className   = 'rule-delete';
+    btn.dataset.idx = idx;
+    btn.title       = 'Remove website';
+    btn.textContent = '✕';
+
+    li.appendChild(left);
     li.appendChild(btn);
     ul.appendChild(li);
   });
 }
 
+function renderDocsOnly() {
+  el('docs-only-toggle').checked = state.docsOnly;
+  el('docs-note').hidden = !state.docsOnly;
+  el('rule-error').textContent = '';
+}
+
 function renderLog() {
   const list  = el('log-list');
   const empty = el('log-empty');
-  el('log-count').textContent = `${state.log.length} entr${state.log.length === 1 ? 'y' : 'ies'}`;
+  const shown = filteredLog();
+  const total = state.log.length;
+  const noun  = n => `${n} entr${n === 1 ? 'y' : 'ies'}`;
+  el('log-count').textContent = shown.length === total ? noun(total) : `${shown.length} of ${noun(total)}`;
 
   list.replaceChildren();
 
-  if (state.log.length === 0) {
+  if (shown.length === 0) {
+    empty.textContent = total === 0 ? 'No downloads logged yet.' : 'No entries match this filter.';
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
 
-  state.log.forEach(entry => {
-    const status = entry.status === 'blocked' ? 'blocked' : 'allowed';
+  shown.forEach(entry => {
+    const status = (entry.status === 'blocked' || entry.status === 'warned') ? entry.status : 'allowed';
 
     const li = document.createElement('li');
     li.className = `log-entry ${status}`;
@@ -1132,6 +1308,7 @@ function renderLog() {
 
     const mimeDiv = document.createElement('div');
     mimeDiv.className = 'log-mime';
+    mimeDiv.title = entry.reason ? `${entry.mimeType || 'unknown'} — ${entry.reason}` : (entry.mimeType || 'unknown');
     mimeDiv.appendChild(buildMimeSpan(entry.mimeType || 'unknown'));
 
     const urlDiv = document.createElement('div');
@@ -1149,6 +1326,10 @@ function renderLog() {
 function renderSettings() {
   el('max-log-input').value   = state.maxLog;
   el('notify-toggle').checked = state.notifyOn;
+  el('clear-on-close-toggle').checked = state.clearLogOnClose;
+  document.querySelectorAll('#mismatch-selector .seg').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mismatch === state.mismatchMode);
+  });
   document.querySelectorAll('#unknown-mime-selector .seg').forEach(btn => {
     btn.classList.toggle('active', (btn.dataset.unknown === 'block') === state.unknownBlock);
   });
@@ -1159,8 +1340,10 @@ function renderAll() {
   renderModeSelector();
   renderBulkButtons();
   renderRuleList();
+  renderSites();
   renderLog();
   renderSettings();
+  renderDocsOnly();
 }
 
 // Tabs
@@ -1219,14 +1402,23 @@ function wireSearch() {
       labelSpan.className = 'sr-label';
       labelSpan.appendChild(buildHighlightedLabel(mime, query));
 
-      const actionBtn = document.createElement('button');
-      actionBtn.className    = `sr-action ${added ? 'sr-remove' : 'sr-add'}`;
-      actionBtn.dataset.mime = mime;
-      actionBtn.title        = added ? 'Remove from rules' : 'Add to rules';
-      actionBtn.textContent  = added ? '−' : '+';
-
       li.appendChild(labelSpan);
-      li.appendChild(actionBtn);
+      if (isLockedDoc(mime)) {
+        // A document type while Docs only is on: no + and no −.
+        li.classList.add('is-locked');
+        const lock = document.createElement('span');
+        lock.className   = 'sr-lock';
+        lock.textContent = 'locked';
+        lock.title       = 'Document types are locked while Docs only is on';
+        li.appendChild(lock);
+      } else {
+        const actionBtn = document.createElement('button');
+        actionBtn.className    = `sr-action ${added ? 'sr-remove' : 'sr-add'}`;
+        actionBtn.dataset.mime = mime;
+        actionBtn.title        = added ? 'Remove from rules' : 'Add to rules';
+        actionBtn.textContent  = added ? '−' : '+';
+        li.appendChild(actionBtn);
+      }
       dropdown.appendChild(li);
     });
 
@@ -1240,6 +1432,7 @@ function wireSearch() {
   }
 
   async function addMime(mime) {
+    if (isLockedDoc(mime)) return;
     const activeKey    = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
     const oppositeKey  = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
     const oppositeList = state.mode === 'allowlist' ? state.denylistRules : state.allowlistRules;
@@ -1259,6 +1452,7 @@ function wireSearch() {
   }
 
   async function removeMime(mime) {
+    if (isLockedDoc(mime)) return;
     const key        = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
     const normalised = mime.toLowerCase();
     // Case-insensitive removal
@@ -1298,6 +1492,7 @@ function wireSearch() {
       if (highlighted >= 0 && items[highlighted]) {
         e.preventDefault();
         const mime  = items[highlighted].dataset.mime;
+        if (items[highlighted].classList.contains('is-locked')) return;
         const added = items[highlighted].classList.contains('is-added');
         added ? removeMime(mime) : addMime(mime);
       } else {
@@ -1315,6 +1510,93 @@ function wireSearch() {
 
   document.addEventListener('click', e => {
     if (!e.target.closest('.rule-input-wrap')) closeDropdown();
+  });
+}
+
+// Website "Only types" autocomplete: suggests MIME types for the comma separated list as you type.
+function wireSiteTypesSearch() {
+  const input    = el('site-types-input');
+  const dropdown = el('site-types-dropdown');
+  let highlighted = -1;
+
+  // The field is a comma separated list; only the last, still-being-typed piece gets suggestions.
+  function doneParts(value) {
+    return value.split(',').slice(0, -1).map(p => p.trim()).filter(Boolean);
+  }
+  function currentToken(value) {
+    const parts = value.split(',');
+    return parts[parts.length - 1].trim();
+  }
+
+  function getMatches(query) {
+    if (!query) return [];
+    const q = query.toLowerCase();
+    return ALL_MIME_TYPES.filter(m => m.toLowerCase().includes(q)).slice(0, 40);
+  }
+
+  function closeDropdown() {
+    dropdown.classList.remove('open');
+    dropdown.replaceChildren();
+    highlighted = -1;
+  }
+
+  function renderDropdown(query) {
+    const matches = getMatches(query);
+    highlighted = -1;
+    if (matches.length === 0) { closeDropdown(); return; }
+    dropdown.replaceChildren();
+    matches.forEach(mime => {
+      const li = document.createElement('li');
+      li.className    = 'search-result is-missing';
+      li.dataset.mime = mime;
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'sr-label';
+      labelSpan.appendChild(buildHighlightedLabel(mime, query));
+      li.appendChild(labelSpan);
+      dropdown.appendChild(li);
+    });
+    dropdown.classList.add('open');
+  }
+
+  // Appends the chosen type to whatever was already typed, ready for the next one.
+  function insertMime(mime) {
+    const done = doneParts(input.value);
+    input.value = [...done, mime].join(', ') + ', ';
+    input.focus();
+    closeDropdown();
+  }
+
+  input.addEventListener('input', () => {
+    const token = currentToken(input.value);
+    if (!token) { closeDropdown(); return; }
+    renderDropdown(token);
+  });
+
+  input.addEventListener('keydown', e => {
+    const items = [...dropdown.querySelectorAll('.search-result')];
+    if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      highlighted = Math.min(highlighted + 1, items.length - 1);
+      items.forEach((item, i) => item.classList.toggle('highlighted', i === highlighted));
+    } else if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      highlighted = Math.max(highlighted - 1, -1);
+      items.forEach((item, i) => item.classList.toggle('highlighted', i === highlighted));
+    } else if (e.key === 'Escape') {
+      closeDropdown();
+    } else if (e.key === 'Enter' && highlighted >= 0 && items[highlighted]) {
+      e.preventDefault();
+      insertMime(items[highlighted].dataset.mime);
+    }
+  });
+
+  dropdown.addEventListener('click', e => {
+    const li = e.target.closest('.search-result');
+    if (li) insertMime(li.dataset.mime);
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#site-types-row')) closeDropdown();
   });
 }
 
@@ -1345,6 +1627,7 @@ function wireEvents() {
     const btn = e.target.closest('.rule-delete');
     if (!btn) return;
     const idx = parseInt(btn.dataset.idx, 10);
+    if (isLockedDoc(activeRules()[idx])) return;
     const key = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
     activeRules().splice(idx, 1);
     await persist({ [key]: activeRules() });
@@ -1362,10 +1645,90 @@ function wireEvents() {
     state.notifyOn = e.target.checked;
   });
 
+  el('clear-on-close-toggle').addEventListener('change', e => {
+    state.clearLogOnClose = e.target.checked;
+  });
+
+  document.querySelectorAll('#mismatch-selector .seg').forEach(btn =>
+    btn.addEventListener('click', () => {
+      state.mismatchMode = btn.dataset.mismatch;
+      document.querySelectorAll('#mismatch-selector .seg').forEach(b =>
+        b.classList.toggle('active', b === btn));
+    }));
+
+  // Website rules
+  el('site-action-select').addEventListener('change', () => {
+    const action = el('site-action-select').value;
+    el('site-types-row').classList.toggle('open', action === 'only');
+    el('site-hint').textContent = SITE_ACTION_HINTS[action];
+  });
+  el('add-site-btn').addEventListener('click', addSiteFromInput);
+  el('site-host-input').addEventListener('keydown', e => { if (e.key === 'Enter') addSiteFromInput(); });
+  el('site-types-input').addEventListener('keydown', e => { if (e.key === 'Enter') addSiteFromInput(); });
+  el('site-list').addEventListener('click', async e => {
+    const btn = e.target.closest('.rule-delete');
+    if (!btn) return;
+    state.siteRules.splice(parseInt(btn.dataset.idx, 10), 1);
+    await persist({ siteRules: state.siteRules });
+    renderSites();
+  });
+
+  // Log filter
+  el('log-status-filter').addEventListener('change', e => {
+    state.logFilter = e.target.value;
+    renderLog();
+  });
+
+  el('export-csv-btn').addEventListener('click', () => {
+    const blob = new Blob([logToCsv(filteredLog())], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `mime-filter-log-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  });
+
+  // Docs only
+  el('docs-only-toggle').addEventListener('change', async e => {
+    /* Allow All, Deny All and None while Docs only is on work on the real
+    *  lists exactly as they always do, and that's left alone here — but
+    *  those actions can leave the lists holding almost nothing but document
+    *  types, which is only meant to matter while Docs only is on. So turning
+    *  Docs only on takes a snapshot of the real mode and lists, and turning
+    *  it off restores that snapshot, so downloads from a website that isn't
+    *  trusted go back to being judged exactly as before Docs only was ever
+    *  turned on.
+    */
+    state.docsOnly = e.target.checked;
+    if (state.docsOnly) {
+      state.docsOnlySnapshot = { mode: state.mode, allowlistRules: [...state.allowlistRules], denylistRules: [...state.denylistRules] };
+      await persist({ docsOnly: true, docsOnlySnapshot: state.docsOnlySnapshot });
+    } else {
+      const snapshot = state.docsOnlySnapshot;
+      const payload  = { docsOnly: false };
+      if (snapshot) {
+        state.mode           = snapshot.mode;
+        state.allowlistRules = snapshot.allowlistRules;
+        state.denylistRules  = snapshot.denylistRules;
+        Object.assign(payload, { mode: state.mode, allowlistRules: state.allowlistRules, denylistRules: state.denylistRules });
+      }
+      state.docsOnlySnapshot = null;
+      await persist(payload);
+      await new Promise(resolve => chrome.storage.local.remove('docsOnlySnapshot', resolve));
+    }
+    renderDocsOnly();
+    renderModeSelector();
+    renderRuleList();
+  });
+
   el('save-settings-btn').addEventListener('click', async () => {
     const maxVal = parseInt(el('max-log-input').value, 10);
     if (!isNaN(maxVal) && maxVal >= 10) state.maxLog = maxVal;
-    await persist({ maxLog: state.maxLog, unknownBlock: state.unknownBlock, notifyOn: state.notifyOn });
+    await persist({
+      maxLog: state.maxLog, unknownBlock: state.unknownBlock, notifyOn: state.notifyOn,
+      clearLogOnClose: state.clearLogOnClose, mismatchMode: state.mismatchMode,
+    });
     const status = el('save-status');
     status.textContent   = '✓ Saved';
     status.style.opacity = '1';
@@ -1393,27 +1756,36 @@ function wireEvents() {
     });
   });
 
-  // "Allow All" / "Deny All": label changes per mode via renderBulkButtons(), but the underlying behaviour is always: fill the list that's active for the current mode with every MIME type
+  // "Allow All" / "Deny All": label changes per mode via renderBulkButtons(), but the underlying behaviour is always: fill the list that's active for the current mode with every MIME type, and clear the other one so a type is never in both at once.
   el('allow-all-btn').addEventListener('click', async () => {
-    if (state.mode === 'allowlist') {
-      state.allowlistRules = [...ALL_MIME_TYPES];
-      state.denylistRules  = [];
-    } else {
-      state.denylistRules  = [...ALL_MIME_TYPES];
-      state.allowlistRules = [];
-    }
-    await persist({ allowlistRules: state.allowlistRules, denylistRules: state.denylistRules });
+    const activeKey   = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+    const oppositeKey = state.mode === 'allowlist' ? 'denylistRules'  : 'allowlistRules';
+    const lower       = t => String(t).toLowerCase();
+
+    // The list being filled: its own locked document entries stay, and every other known type is added.
+    const lockedHere = state[activeKey].filter(isLockedDoc);
+    const filled     = [...lockedHere, ...ALL_MIME_TYPES.filter(t => !isLockedDoc(t) && !lockedHere.includes(t))];
+
+    // The other list: everything is cleared except its own locked document entries. A locked entry the filled list also holds is dropped here, so nothing is ever in both lists.
+    const filledTypes = new Set(filled.map(lower));
+    const otherKept   = state[oppositeKey].filter(t => isLockedDoc(t) && !filledTypes.has(lower(t)));
+
+    state[activeKey]   = filled;
+    state[oppositeKey] = otherKept;
+    await persist({ [activeKey]: filled, [oppositeKey]: otherKept });
     renderRuleList();
   });
 
-  // "None": empties whichever list is active for the current mode.
+  // "None": empties whichever list is active for the current mode (locked document entries stay).
   el('none-btn').addEventListener('click', async () => {
+    const key   = state.mode === 'allowlist' ? 'allowlistRules' : 'denylistRules';
+    const kept  = activeRules().filter(isLockedDoc);
     if (state.mode === 'allowlist') {
-      state.allowlistRules = [];
+      state.allowlistRules = kept;
     } else {
-      state.denylistRules = [];
+      state.denylistRules = kept;
     }
-    await persist({ allowlistRules: state.allowlistRules, denylistRules: state.denylistRules });
+    await persist({ [key]: activeRules() });
     renderRuleList();
   });
 
@@ -1431,6 +1803,13 @@ async function addRuleFromInput() {
   const input = el('rule-input');
   const raw   = input.value.trim();
   if (!raw) return;
+  el('rule-error').textContent = '';
+  if (isLockedDoc(raw)) {
+    el('rule-error').textContent = 'Document types are locked while Docs only is on.';
+    input.style.borderColor = 'var(--red)';
+    setTimeout(() => { input.style.borderColor = ''; el('rule-error').textContent = ''; }, 2500);
+    return;
+  }
   if (!/[a-zA-Z]/.test(raw)) {
     input.style.borderColor = 'var(--red)';
     setTimeout(() => { input.style.borderColor = ''; }, 800);
@@ -1456,10 +1835,56 @@ async function addRuleFromInput() {
   input.focus();
 }
 
+// Add a site rule from the Websites tab.
+async function addSiteFromInput() {
+  const hostInput  = el('site-host-input');
+  const typesInput = el('site-types-input');
+  const action     = el('site-action-select').value;
+  const error      = el('site-error');
+  const host       = normalizeHost(hostInput.value);
+
+  const fail = message => {
+    error.textContent = message;
+    setTimeout(() => { if (error.textContent === message) error.textContent = ''; }, 3500);
+  };
+
+  if (!host || !isValidHost(host)) {
+    hostInput.style.borderColor = 'var(--red)';
+    setTimeout(() => { hostInput.style.borderColor = ''; }, 800);
+    fail('Enter a website such as example.com.');
+    return;
+  }
+
+  let types = [];
+  if (action === 'only') {
+    types = parseTypeList(typesInput.value);
+    if (types.length === 0) {
+      typesInput.style.borderColor = 'var(--red)';
+      setTimeout(() => { typesInput.style.borderColor = ''; }, 800);
+      fail('List at least one type, such as application/pdf.');
+      return;
+    }
+  }
+
+  error.textContent = '';
+  // One rule per site: adding the same site again replaces its rule.
+  const rule = { host, action, types };
+  const existing = state.siteRules.findIndex(r => r.host === host);
+  if (existing !== -1) state.siteRules[existing] = rule;
+  else state.siteRules.push(rule);
+
+  await persist({ siteRules: state.siteRules });
+  renderSites();
+  hostInput.value  = '';
+  typesInput.value = '';
+  hostInput.focus();
+}
+
 // Boot
 (async () => {
   await loadState();
   renderAll();
   wireEvents();
   wireSearch();
+  wireSiteTypesSearch();
 })();

@@ -32,12 +32,16 @@
     <!-- Tab bar -->
     <nav class="tabs">
       <button class="tab active" data-tab="rules">Rules</button>
+      <button class="tab" data-tab="docs">Docs only</button>
+      <button class="tab" data-tab="sites">Websites</button>
       <button class="tab" data-tab="log">Log</button>
       <button class="tab" data-tab="settings">Settings</button>
     </nav>
 
     <!--  RULES TAB  -->
     <section class="tab-panel active" id="panel-rules">
+
+      <p class="docs-note" id="docs-note" hidden>DOCS ONLY mode is ON. Document types are locked.</p>
 
       <div class="mode-row">
         <span class="mode-label">Mode</span>
@@ -63,6 +67,8 @@
         <ul class="search-dropdown" id="search-dropdown"></ul>
       </div>
 
+      <p class="rule-error" id="rule-error"></p>
+
       <ul class="rule-list" id="rule-list">
         <!-- populated by JS -->
       </ul>
@@ -77,13 +83,95 @@
 
     </section>
 
+    <!--  DOCS ONLY TAB  -->
+    <section class="tab-panel" id="panel-docs">
+
+      <div class="setting-row docs-toggle-row">
+        <label class="setting-label" for="docs-only-toggle">
+          Allow documents only
+        </label>
+        <label class="toggle-switch small">
+          <input type="checkbox" id="docs-only-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
+      <p class="docs-title"></p>
+      <div class="docs-box">
+        <div class="docs-mime"><span class="mime-prefix">application/</span>pdf</div>
+        <div class="docs-mime"><span class="mime-prefix">application/</span>rtf</div>
+        <div class="docs-mime"><span class="mime-prefix">application/</span>csv</div>
+        <div class="docs-mime"><span class="mime-prefix">application/</span>msword</div>
+        <div class="docs-mime"><span class="mime-prefix">application/</span>epub+zip</div>
+        <div class="docs-mime"><span class="mime-prefix">application/</span>vnd.ms-excel</div>
+        <div class="docs-mime"><span class="mime-prefix">application/</span>vnd.oasis.opendocument.text</div>
+        <div class="docs-more">and other document types</div>
+      </div>
+      <p class="setting-hint">Plain text (text/plain) is not included because scripts written in languages such as Python, Java, JavaScript and Go often appear as text/plain.</p>
+
+    </section>
+
+    <!--  SITES TAB  -->
+    <section class="tab-panel" id="panel-sites">
+
+      <p class="mode-hint">For example, allow anything from your company intranet, home server, or a chatbot like LocalChat, but stay strict everywhere else.</p>
+
+      <div class="rule-input-row">
+        <input
+          type="text"
+          id="site-host-input"
+          class="rule-input"
+          placeholder="example.com"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <select id="site-action-select" class="site-select" title="What to do with downloads from this site">
+          <option value="allow">Trust</option>
+          <option value="block">Block</option>
+          <option value="only">Only types</option>
+        </select>
+        <button id="add-site-btn" class="btn-add" title="Add site rule">＋</button>
+      </div>
+
+      <div class="rule-input-wrap site-types-row" id="site-types-row">
+        <div class="rule-input-row">
+          <input
+            type="text"
+            id="site-types-input"
+            class="rule-input"
+            placeholder="Allowed types, e.g. application/pdf, image/"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <ul class="search-dropdown" id="site-types-dropdown"></ul>
+      </div>
+
+      <p class="site-hint" id="site-hint">Trust: any file type is allowed from this website.</p>
+      <p class="site-error" id="site-error"></p>
+
+      <ul class="rule-list site-list" id="site-list">
+        <!-- populated by JS -->
+      </ul>
+
+    </section>
+
     <!--  LOG TAB  -->
     <section class="tab-panel" id="panel-log">
 
       <div class="log-toolbar">
-        <span class="log-count" id="log-count">0 entries</span>
+        <div class="log-left">
+          <select id="log-status-filter" class="site-select" title="Show only one kind of entry">
+            <option value="all">All</option>
+            <option value="blocked">Blocked</option>
+            <option value="warned">Warned</option>
+            <option value="allowed">Allowed</option>
+          </select>
+          <span class="log-count" id="log-count">0 entries</span>
+        </div>
         <div class="log-actions">
-          <button class="btn-ghost" id="export-btn">Export JSON</button>
+          <button class="btn-ghost" id="export-btn" title="Save the whole log as JSON">JSON</button>
+          <button class="btn-ghost" id="export-csv-btn" title="Save the entries shown as CSV">CSV</button>
           <button class="btn-ghost danger" id="clear-log-btn">Clear</button>
         </div>
       </div>
@@ -129,11 +217,34 @@
         </label>
       </div>
 
+      <div class="setting-row">
+        <label class="setting-label">
+          File name check
+          <span class="setting-hint">Compares a file's name with what it really is, such as a program named invoice.pdf. Warn allows it and logs a warning.</span>
+        </label>
+        <div class="segmented" id="mismatch-selector">
+          <button class="seg" data-mismatch="off">Off</button>
+          <button class="seg active" data-mismatch="warn">Warn</button>
+          <button class="seg" data-mismatch="block">Block</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label class="setting-label">
+          Clear log when browser closes
+          <span class="setting-hint">Deletes the download log each time the browser is closed.</span>
+        </label>
+        <label class="toggle-switch small">
+          <input type="checkbox" id="clear-on-close-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        </label>
+      </div>
+
       <button class="btn-save" id="save-settings-btn">Save Settings</button>
       <p class="save-status" id="save-status"></p>
 
       <div class="about-block">
-        <p>MIME Filter v1.2.4 by <a href="https://github.com/macbuildssys" style="color:var(--amber);text-decoration:none">macbuildssys</a></p>
+        <p>MIME Filter v1.2.5 by <a href="https://github.com/macbuildssys" style="color:var(--amber);text-decoration:none">macbuildssys</a></p>
       </div>
 
     </section>
