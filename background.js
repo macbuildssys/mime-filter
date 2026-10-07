@@ -2224,16 +2224,25 @@ chrome.downloads.onCreated.addListener(function(item) {
   work.then(cleanup, cleanup);
 });
 
-chrome.downloads.onDeterminingFilename.addListener(function(item, suggest) {
-  rememberName(item.id, String(item.filename || '').split(/[\\/]/).pop());
-  var pending = pendingDecisions.get(item.id);
-  if (!pending) return false;              // nothing is being judged, so let it carry on
-  var timer;
-  var limit = new Promise(function(resolve) { timer = setTimeout(resolve, HOLD_LIMIT_MS); });
-  function release() { clearTimeout(timer); suggest(); }
-  Promise.race([pending, limit]).then(release, release);
-  return true;                             // tells the browser the answer comes later
-});
+/* Firefox does not provide downloads.onDeterminingFilename (it is a Chrome
+*  only event). Calling addListener on it used to throw here and stop the
+*  whole script, so nothing registered after this point ever ran, including
+*  the startup and clear log handlers. It is only registered where it exists.
+*  Without it the download is still judged in onCreated, and a blocked file
+*  is cancelled and removed by discardDownload.
+*/
+if (chrome.downloads.onDeterminingFilename) {
+  chrome.downloads.onDeterminingFilename.addListener(function(item, suggest) {
+    rememberName(item.id, String(item.filename || '').split(/[\\/]/).pop());
+    var pending = pendingDecisions.get(item.id);
+    if (!pending) return false;              // nothing is being judged, so let it carry on
+    var timer;
+    var limit = new Promise(function(resolve) { timer = setTimeout(resolve, HOLD_LIMIT_MS); });
+    function release() { clearTimeout(timer); suggest(); }
+    Promise.race([pending, limit]).then(release, release);
+    return true;                             // tells the browser the answer comes later
+  });
+}
 
 /*
   SPOOF-CHECK PATH: chrome.downloads.onChanged.
@@ -2381,15 +2390,41 @@ chrome.runtime.onInstalled.addListener(function() {
 });
 
 chrome.runtime.onStartup.addListener(function() {
-  refreshCachedState(function() {
-    if (cachedState.clearLogOnClose) clearLog();
-  });
+  // Newer Firefox is handled by clearLogIfNewBrowserSession below. This is
+  // only the fallback for versions without storage.session.
+  if (!chrome.storage.session) {
+    refreshCachedState(function() {
+      if (cachedState.clearLogOnClose) clearLog();
+    });
+  }
   clearAllNotifications();
 });
 
+/* Clear log when the browser closes, the reliable way.
+*  An extension is never told in time that the browser is quitting, so the
+*  windows.onRemoved handler below often loses the race. Instead, every time
+*  this script starts it checks a marker kept in storage.session, which the
+*  browser wipes when it closes. No marker means the browser was restarted
+*  since the log was last used, so the log is cleared now if the setting is
+*  on. The marker is then set so a normal background respawn within the same
+*  browser session never clears anything.
+*/
+function clearLogIfNewBrowserSession() {
+  if (!chrome.storage.session) return;
+  chrome.storage.session.get('browserSessionMarker').then(function(data) {
+    if (data && data.browserSessionMarker) return;
+    return chrome.storage.session.set({ browserSessionMarker: true }).then(function() {
+      refreshCachedState(function() {
+        if (cachedState.clearLogOnClose) clearLog();
+      });
+    });
+  }).catch(function() {});
+}
+clearLogIfNewBrowserSession();
+
 /* Clear log when the browser closes. Closing the last window is the closest
-*  signal an extension gets — best effort, since the browser can exit before
-*  this finishes, so onStartup above clears anything left over as a fallback.
+*  signal an extension gets, but only best effort, since the browser can exit
+*  before this finishes. The session marker check above clears anything left over.
 */
 chrome.windows.onRemoved.addListener(function() {
   chrome.windows.getAll({}, function(remaining) {
