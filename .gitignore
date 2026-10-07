@@ -1,0 +1,14 @@
+# Signed builds and packaging output
+web-ext-artifacts/
+*.xpi
+.amo-upload-uuid
+
+# Python virtual environment
+venv/
+.venv/
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
