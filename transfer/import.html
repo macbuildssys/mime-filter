@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Import MIME Filter settings</title>
+  <link rel="stylesheet" href="import.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>MIME Filter</h1>
+    <p class="lead">Choose a settings file exported from MIME Filter. You will see what it contains before anything changes. It replaces your current rules and settings. The download log is not touched.</p>
+    <div class="actions">
+      <button class="pick" id="pick-btn">Choose settings file</button>
+      <button class="close" id="close-btn">Close</button>
+    </div>
+    <input type="file" id="file-input" accept=".json,application/json" hidden />
+    <p class="result" id="result" role="status"></p>
+    <ul class="summary" id="summary" hidden></ul>
+    <div class="actions confirm" id="confirm" hidden>
+      <button class="pick" id="apply-btn">Apply</button>
+      <button class="close" id="cancel-btn">Cancel</button>
+    </div>
+  </main>
+  <script src="import.js"></script>
+</body>
+</html>

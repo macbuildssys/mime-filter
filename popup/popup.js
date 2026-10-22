@@ -1735,6 +1735,39 @@ function wireEvents() {
     setTimeout(() => { status.style.opacity = '0'; }, 1800);
   });
 
+  el('settings-export-btn').addEventListener('click', () => {
+    const data = {
+      format:     'mime-filter-settings',
+      version:    1,
+      exportedAt: new Date().toISOString(),
+      settings: {
+        enabled:         state.enabled,
+        mode:            state.mode,
+        allowlistRules:  state.allowlistRules,
+        denylistRules:   state.denylistRules,
+        siteRules:       state.siteRules,
+        unknownBlock:    state.unknownBlock,
+        notifyOn:        state.notifyOn,
+        mismatchMode:    state.mismatchMode,
+        clearLogOnClose: state.clearLogOnClose,
+        maxLog:          state.maxLog,
+        docsOnly:        state.docsOnly,
+      },
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `mime-filter-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 100);
+  });
+
+  // A file picker closes the popup, so importing runs in a small window of its own
+  el('settings-import-btn').addEventListener('click', () => {
+    chrome.windows.create({ url: chrome.runtime.getURL('transfer/import.html'), type: 'popup', width: 460, height: 520 }, () => window.close());
+  });
+
   el('export-btn').addEventListener('click', () => {
     chrome.storage.local.get('downloadLog', data => {
       const log  = data.downloadLog || [];

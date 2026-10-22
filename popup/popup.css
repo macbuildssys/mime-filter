@@ -718,3 +718,5 @@ html, body { width: var(--popup-w); height: 370px; overflow: hidden; background:
 }
 .rule-error:empty { display: none; }
 .search-result.is-locked .sr-label { color: var(--text-dim); }
+
+.transfer-actions { display: flex; gap: 6px; flex-shrink: 0; }
