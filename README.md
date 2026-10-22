@@ -106,6 +106,12 @@ The **Log** tab shows all intercepted downloads, newest first, filterable by sta
 
 Click **JSON** to export the full log, or **CSV** to export just the entries currently shown by the status filter, as a spreadsheet-ready `.csv` file.
 
+### Export and import settings
+
+Open the **Settings** tab and find **Backup and transfer**. **Export** saves your mode, allowed and denied types, website rules and options to a `.json` file. The download log is not included.
+
+**Import** opens a small window. Choose a file exported from MIME Filter on Chrome or on another Firefox browser, and the window lists what the file contains. Nothing changes until you press **Apply**, after which the window closes by itself. Anything in the file that is not valid is ignored.
+
 ## Sample MIME Type Rules
 
 ### Allowlist (office + documents)
