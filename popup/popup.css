@@ -460,14 +460,15 @@ html, body { width: var(--popup-w); height: 370px; overflow: hidden; background:
 }
 
 .about-block {
-  margin-top: 18px;
-  padding: 10px;
+  display: table;
+  margin: 14px auto 0;
+  padding: 5px 18px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 999px;
   font-size: 11px;
   color: var(--text-dim);
-  line-height: 1.7;
+  line-height: 1.4;
 }
 .about-block code {
   font-family: var(--font-mono);
@@ -720,3 +721,34 @@ html, body { width: var(--popup-w); height: 370px; overflow: hidden; background:
 .search-result.is-locked .sr-label { color: var(--text-dim); }
 
 .transfer-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Export feedback: the line under the Backup and transfer row */
+.btn-ghost:disabled { opacity: .6; cursor: default; }
+.transfer-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 16px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--amber);
+}
+.transfer-status span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-status.done      { color: var(--green); }
+.transfer-status.cancelled { color: var(--text-dim); }
+.transfer-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--amber-dim);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: transferSpin .7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes transferSpin { to { transform: rotate(360deg); } }
+
+/* Popup stays hidden until the first render is done, so the blank HTML never shows and the toggles do not slide into place */
+body:not(.ready) #app { visibility: hidden; }
+body:not(.ready) *, body:not(.ready) *::before, body:not(.ready) *::after { transition: none !important; animation: none !important; }

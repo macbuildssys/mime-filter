@@ -1570,6 +1570,19 @@ function isHardInternalUrl(url) {
   return false;
 }
 
+/* The files this extension saves itself (settings export, log JSON, log CSV)
+*  are written from the popup through a blob address that looks like
+*  blob:moz-extension://<id>/... It starts with "blob:", so the moz-extension://
+*  check above never matched it. Only THIS extension's own address is skipped,
+*  so another extension cannot use it to get past the rules.
+*/
+var OWN_ORIGIN = chrome.runtime.getURL('');
+
+function isOwnDownload(item) {
+  var url = String((item && item.url) || '');
+  return url.indexOf(OWN_ORIGIN) === 0 || url.indexOf('blob:' + OWN_ORIGIN) === 0;
+}
+
 var STATE_KEYS = [
   'enabled', 'mode', 'allowlistRules', 'denylistRules', 'notifyOn', 'unknownBlock',
   'siteRules', 'mismatchMode', 'docsOnly', 'clearLogOnClose',
@@ -2004,6 +2017,7 @@ function blockForMismatch(item, mimeType, note, notifyOn, site) {
   magic-byte sniffing step.
 */
 function judgeNewDownload(downloadItem) {
+  if (isOwnDownload(downloadItem)) return Promise.resolve();   // our own export: not a website download, never checked or logged
   if (isRestoredFromHistory(downloadItem)) return Promise.resolve();
 
   return claimDownload(downloadItem).then(function(claimed) {
@@ -2281,6 +2295,8 @@ chrome.downloads.onChanged.addListener(function(delta) {
   chrome.downloads.search({ id: delta.id }, function(results) {
     var item = results && results[0];
     if (!item) return;
+
+    if (isOwnDownload(item)) return;   // our own export: never re-checked or deleted
 
     var state = cachedState;
     var url = item.url || '';

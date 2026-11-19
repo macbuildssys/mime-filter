@@ -1600,6 +1600,141 @@ function wireSiteTypesSearch() {
   });
 }
 
+// Export feedback (the line under the Backup and transfer row)
+let transferClearTimer = null;
+
+function clearTransferStatus() {
+  clearTimeout(transferClearTimer);
+  const box = el('transfer-status');
+  box.className   = 'transfer-status';
+  box.textContent = '';
+}
+
+// kind is 'working', 'done' or 'cancelled'
+function showTransferStatus(kind, text) {
+  clearTimeout(transferClearTimer);
+  const box = el('transfer-status');
+  box.className   = kind === 'working' ? 'transfer-status' : 'transfer-status ' + kind;
+  box.textContent = '';
+  if (kind === 'working') {
+    const spinner = document.createElement('span');
+    spinner.className = 'transfer-spinner';
+    box.appendChild(spinner);
+  }
+  const label = document.createElement('span');
+  label.textContent = text;
+  box.appendChild(label);
+}
+
+/* Follows our own download from the moment it is created until the browser
+*  says it finished or stopped. It must be called BEFORE the click, so the
+*  creation event is not missed. The download is picked out by its blob
+*  address. Returns a function that stops watching and clears the message.
+*/
+function watchExport(url) {
+  let downloadId = null;
+  let closing    = false;
+  let finished   = false;
+  let giveUpTimer = null;
+
+  function cleanup() {
+    chrome.downloads.onCreated.removeListener(onCreated);
+    chrome.downloads.onChanged.removeListener(onChanged);
+    clearTimeout(giveUpTimer);
+    URL.revokeObjectURL(url);
+    const btn = el('settings-export-btn');
+    btn.disabled    = false;
+    btn.textContent = 'Export';
+  }
+
+  function finish(kind, text) {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    showTransferStatus(kind, text);
+    transferClearTimer = setTimeout(clearTransferStatus, 4000);
+  }
+
+  function onCreated(item) {
+    if (downloadId === null && item.url === url) downloadId = item.id;
+  }
+
+  function onChanged(delta) {
+    if (downloadId === null || delta.id !== downloadId || closing || !delta.state) return;
+    if (delta.state.current === 'complete') {
+      closing = true;
+      chrome.downloads.search({ id: downloadId }, results => {
+        void chrome.runtime.lastError;
+        const found = results && results[0] && results[0].filename ? String(results[0].filename).split(/[\\/]/).pop() : '';
+        finish('done', found ? '✓ Saved: ' + found : '✓ Saved');
+      });
+    } else if (delta.state.current === 'interrupted') {
+      closing = true;
+      finish('cancelled', 'Export cancelled');
+    }
+  }
+
+  chrome.downloads.onCreated.addListener(onCreated);
+  chrome.downloads.onChanged.addListener(onChanged);
+
+  // Nothing happened for 2 minutes: put the button back, with no result message
+  giveUpTimer = setTimeout(() => {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    clearTransferStatus();
+  }, 2 * 60 * 1000);
+
+  return function stopWatching() {
+    if (finished) return;
+    finished = true;
+    cleanup();
+    clearTransferStatus();
+  };
+}
+
+// The settings file itself. There is a single a.click() here: a second one would save the file twice.
+function exportSettingsFile() {
+  let stopWatching = null;
+  try {
+    const data = {
+      format:     'mime-filter-settings',
+      version:    1,
+      exportedAt: new Date().toISOString(),
+      settings: {
+        enabled:         state.enabled,
+        mode:            state.mode,
+        allowlistRules:  state.allowlistRules,
+        denylistRules:   state.denylistRules,
+        siteRules:       state.siteRules,
+        unknownBlock:    state.unknownBlock,
+        notifyOn:        state.notifyOn,
+        mismatchMode:    state.mismatchMode,
+        clearLogOnClose: state.clearLogOnClose,
+        maxLog:          state.maxLog,
+        docsOnly:        state.docsOnly,
+      },
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    stopWatching = watchExport(url);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `mime-filter-settings-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+  } catch (err) {
+    // Never leave the button stuck on "Saving…"
+    if (stopWatching) stopWatching();
+    else {
+      const btn = el('settings-export-btn');
+      btn.disabled    = false;
+      btn.textContent = 'Export';
+      clearTransferStatus();
+    }
+    console.error('[MIME Filter] Settings export failed:', err);
+  }
+}
+
 // Event wiring
 function wireEvents() {
 
@@ -1735,32 +1870,14 @@ function wireEvents() {
     setTimeout(() => { status.style.opacity = '0'; }, 1800);
   });
 
+  // Export: the message and the disabled button appear first, then the file is built and saved on the next frames
   el('settings-export-btn').addEventListener('click', () => {
-    const data = {
-      format:     'mime-filter-settings',
-      version:    1,
-      exportedAt: new Date().toISOString(),
-      settings: {
-        enabled:         state.enabled,
-        mode:            state.mode,
-        allowlistRules:  state.allowlistRules,
-        denylistRules:   state.denylistRules,
-        siteRules:       state.siteRules,
-        unknownBlock:    state.unknownBlock,
-        notifyOn:        state.notifyOn,
-        mismatchMode:    state.mismatchMode,
-        clearLogOnClose: state.clearLogOnClose,
-        maxLog:          state.maxLog,
-        docsOnly:        state.docsOnly,
-      },
-    };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = `mime-filter-settings-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 100);
+    const btn = el('settings-export-btn');
+    if (btn.disabled) return;
+    btn.disabled    = true;
+    btn.textContent = 'Saving…';
+    showTransferStatus('working', 'Saving your settings as a file…');
+    requestAnimationFrame(() => requestAnimationFrame(exportSettingsFile));
   });
 
   // A file picker closes the popup, so importing runs in a small window of its own
@@ -1914,10 +2031,20 @@ async function addSiteFromInput() {
 }
 
 // Boot
+/* The popup stays hidden (see body:not(.ready) in popup.css) until the first
+*  render is done, so the blank HTML never shows. A layout is forced before the
+*  class is added, so the toggles are already in place and do not slide.
+*  The class is added in finally, so the popup can never stay blank.
+*/
 (async () => {
-  await loadState();
-  renderAll();
-  wireEvents();
-  wireSearch();
-  wireSiteTypesSearch();
+  try {
+    await loadState();
+    renderAll();
+    wireEvents();
+    wireSearch();
+    wireSiteTypesSearch();
+  } finally {
+    void document.body.offsetHeight;
+    document.body.classList.add('ready');
+  }
 })();
